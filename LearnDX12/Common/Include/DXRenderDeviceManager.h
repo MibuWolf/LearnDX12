@@ -4,7 +4,6 @@
 #include "UploadBuffer.h"
 #include "MathHelper.h"
 #include "SystemTimer.h"
-#include <DirectXMath.h>
 #if defined(DEBUG) || defined(_DEBUG)
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
@@ -22,10 +21,6 @@ using namespace DirectX;
 #define SWAPCHAINBUFFERCOUNT 2
 
 
-struct ObjectConstants
-{
-	XMFLOAT4X4 WorldViewProj = MathHelper::Identity4x4();
-};
 
 class DXRenderDeviceManager
 {
@@ -51,13 +46,13 @@ public:
 	virtual void Tick(SystemTimer& Timer);
 
 	// 清理后台缓冲区
-	virtual void Clear(SystemTimer& Timer);
+	virtual void Clear(SystemTimer& Timer, ID3D12PipelineState* pPipelineState = nullptr);
 
 	// 推送后台缓冲区到前台显示
 	virtual void Present(SystemTimer& Timer);
 
 	// 重置命令列表
-	virtual void ResetCommandList();
+	virtual void ResetCommandList(ID3D12PipelineState* pPipelineState = nullptr);
 
 	// 执行命令队列
 	virtual void ExecuteCommandQueue();
@@ -67,6 +62,18 @@ public:
 
 	// 刷新GPU命令队列，待GPU命令队列玩成前CPU处于等待避免在GPU完成绘制前，CPU修改资源属性
 	void		FlushCommandQueue();
+
+	// 获取当前MASS是否开启
+	bool		CheckMSAAState()
+	{
+		return EnableMSAA;
+	}
+
+	// 获取MASS品质
+	UINT		GetMSAAQuality()
+	{
+		return MSAAQuality;
+	}
 
 public:
 
@@ -82,11 +89,6 @@ public:
 		return CommandList.Get();
 	}
 
-	// 获取命令列表
-	ID3D12DescriptorHeap* GetConstBufferDesc()
-	{
-		return CBVHeap.Get();
-	}
 
 protected:
 
@@ -141,10 +143,6 @@ private:
 	ComPtr<ID3D12DescriptorHeap> RTVHeap;
 	// 为深度缓冲区创建Depth/StencilView描述符
 	ComPtr<ID3D12DescriptorHeap> DSVHeap;
-	// 为常量缓冲区创建CBV描述符
-	ComPtr<ID3D12DescriptorHeap> CBVHeap;
-
-	std::unique_ptr<UploadBuffer<ObjectConstants>> mObjectCB = nullptr;
 
 	// 视口
 	D3D12_VIEWPORT ScreenViewport;

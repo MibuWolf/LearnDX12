@@ -1,5 +1,57 @@
 ﻿#include "Base/Geometry.h"
 #include "DX12Util.h"
+#include "DXRenderDeviceManager.h"
+
+
+
+
+void Geometry::Initialize()
+{
+	CreateConstantBuffers();
+	CreateRootSignature();
+	CreateShader();
+	CreateVertexAndIndexBuffer();
+	CreatePSO();
+}
+
+void Geometry::Draw(SystemTimer& Timer)
+{
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+
+	if (pCommandList == nullptr)
+		return;
+
+	ID3D12DescriptorHeap* descriptorHeaps[] = { CBVHeap.Get() };
+	pCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
+	pCommandList->SetGraphicsRootSignature(RootSignature.Get());
+
+
+	// 向命令列表中设置顶点缓冲区描述符
+	pCommandList->IASetVertexBuffers(0,	// 该接口支持设置多个缓冲区，此参数表示起始输入缓冲区的索引 
+		1,								// 缓冲区的数量
+		&VertexBufferView);	// 指向一个缓冲区描述符数组
+	// 向命令列表中设置索引缓冲区描述符的数组指针
+	pCommandList->IASetIndexBuffer(&IndexBufferView);
+	// 指定将要绘制的图元类型
+	pCommandList->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	// 以索引方式开始绘制(支持多实例渲染)
+	pCommandList->DrawIndexedInstanced(
+		36,		// 每个绘制实例需要绘制的索引数量	
+		1,		// 每次绘制1个实例
+		0,		// 从索引下标为0的位置开始读取索引
+		0,		// BaseVertexLocation 根据索引查找顶点时的基础顶点偏移(eg: 多个模型顶点索引数据合并后，可用此偏移表示绘制第几个模型)
+		0);		// 用于在多实例渲染时使用
+}
+
+
+void Geometry::SetMatrixParameter(XMMATRIX& worldViewProj)
+{
+	ObjectConstants objConstants;
+	XMStoreFloat4x4(&objConstants.WorldViewProj, XMMatrixTranspose(worldViewProj));
+	ObjectConstantBuffer->CopyData(0, objConstants);
+}
+
 
 
 void Geometry::UploadVertexData(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, const void* initData, UINT64 StrideSize, UINT64 byteSize)
@@ -96,4 +148,192 @@ bool Geometry::CreateAndUploadBuffer(ID3D12Device* device, ID3D12GraphicsCommand
 	cmdList->ResourceBarrier(1, &defaultResBarrier2);
 
 	return true;
+}
+
+void Geometry::CreateConstantBuffers()
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+
+	if (pD3DDevice == nullptr || pCommandList == nullptr)
+		return;
+
+	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc;
+	cbvHeapDesc.NumDescriptors = 1;
+	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	cbvHeapDesc.NodeMask = 0;
+	ThrowIfFailed(pD3DDevice->CreateDescriptorHeap(&cbvHeapDesc,
+		IID_PPV_ARGS(&CBVHeap)));
+
+
+	ObjectConstantBuffer = std::make_unique<UploadBuffer<ObjectConstants>>(pD3DDevice, 1, true);
+
+	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+
+	D3D12_GPU_VIRTUAL_ADDRESS cbAddress = ObjectConstantBuffer->Resource()->GetGPUVirtualAddress();
+	// Offset to the ith object constant buffer in the buffer.
+	int boxCBufIndex = 0;
+	cbAddress += boxCBufIndex * objCBByteSize;
+
+	D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
+	cbvDesc.BufferLocation = cbAddress;
+	cbvDesc.SizeInBytes = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+
+	pD3DDevice->CreateConstantBufferView(
+		&cbvDesc,
+		CBVHeap->GetCPUDescriptorHandleForHeapStart());
+}
+
+void Geometry::CreateRootSignature()
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+
+	if (pD3DDevice == nullptr || pCommandList == nullptr)
+		return;
+
+	// Shader programs typically require resources as input (constant buffers,
+	// textures, samplers).  The root signature defines the resources the shader
+	// programs expect.  If we think of the shader programs as a function, and
+	// the input resources as function parameters, then the root signature can be
+	// thought of as defining the function signature.  
+
+	// Root parameter can be a table, root descriptor or root constants.
+	CD3DX12_ROOT_PARAMETER slotRootParameter[1];
+
+	// Create a single descriptor table of CBVs.
+	CD3DX12_DESCRIPTOR_RANGE cbvTable;
+	cbvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
+	slotRootParameter[0].InitAsDescriptorTable(1, &cbvTable);
+
+	// A root signature is an array of root parameters.
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(1, slotRootParameter, 0, nullptr,
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	// create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
+	ComPtr<ID3DBlob> serializedRootSig = nullptr;
+	ComPtr<ID3DBlob> errorBlob = nullptr;
+	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
+
+	if (errorBlob != nullptr)
+	{
+		::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+	}
+	ThrowIfFailed(hr);
+
+	ThrowIfFailed(pD3DDevice->CreateRootSignature(
+		0,
+		serializedRootSig->GetBufferPointer(),
+		serializedRootSig->GetBufferSize(),
+		IID_PPV_ARGS(&RootSignature)));
+}
+
+
+void Geometry::CreateVertexAndIndexBuffer()
+{
+	std::array<Vertex, 8> vertices =
+	{
+		Vertex({ XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT4(Colors::White) }),
+		Vertex({ XMFLOAT3(-1.0f, +1.0f, -1.0f), XMFLOAT4(Colors::Black) }),
+		Vertex({ XMFLOAT3(+1.0f, +1.0f, -1.0f), XMFLOAT4(Colors::Red) }),
+		Vertex({ XMFLOAT3(+1.0f, -1.0f, -1.0f), XMFLOAT4(Colors::Green) }),
+		Vertex({ XMFLOAT3(-1.0f, -1.0f, +1.0f), XMFLOAT4(Colors::Blue) }),
+		Vertex({ XMFLOAT3(-1.0f, +1.0f, +1.0f), XMFLOAT4(Colors::Yellow) }),
+		Vertex({ XMFLOAT3(+1.0f, +1.0f, +1.0f), XMFLOAT4(Colors::Cyan) }),
+		Vertex({ XMFLOAT3(+1.0f, -1.0f, +1.0f), XMFLOAT4(Colors::Magenta) })
+	};
+
+	std::array<std::uint16_t, 36> indices =
+	{
+		// front face
+		0, 1, 2,
+		0, 2, 3,
+
+		// back face
+		4, 6, 5,
+		4, 7, 6,
+
+		// left face
+		4, 5, 1,
+		4, 1, 0,
+
+		// right face
+		3, 2, 6,
+		3, 6, 7,
+
+		// top face
+		1, 5, 6,
+		1, 6, 2,
+
+		// bottom face
+		4, 0, 3,
+		4, 3, 7
+	};
+
+	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
+	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
+
+	Name = "boxGeo";
+
+	ThrowIfFailed(D3DCreateBlob(vbByteSize, &VertexBufferCPU));
+	CopyMemory(VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
+
+	ThrowIfFailed(D3DCreateBlob(ibByteSize, &IndexBufferCPU));
+	CopyMemory(IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
+
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+	UploadVertexData(pD3DDevice, pCommandList, vertices.data(), sizeof(Vertex), vbByteSize);
+	UploadVertexIndexData(pD3DDevice, pCommandList, indices.data(), ibByteSize);
+}
+
+void Geometry::CreateShader()
+{
+	HRESULT hr = S_OK;
+
+	VSByteCode = d3dUtil::CompileShader(L"Shaders\\color.hlsl", nullptr, "VS", "vs_5_0");
+	PSByteCode = d3dUtil::CompileShader(L"Shaders\\color.hlsl", nullptr, "PS", "ps_5_0");
+
+	InputLayout =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+	};
+}
+
+void Geometry::CreatePSO()
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	if (pD3DDevice == nullptr)
+		return;
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc;
+	ZeroMemory(&psoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
+	psoDesc.InputLayout = { InputLayout.data(), (UINT)InputLayout.size() };
+	psoDesc.pRootSignature = RootSignature.Get();
+	psoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(VSByteCode->GetBufferPointer()),
+		VSByteCode->GetBufferSize()
+	};
+	psoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(PSByteCode->GetBufferPointer()),
+		PSByteCode->GetBufferSize()
+	};
+
+	bool enableMSAA = DXRenderDeviceManager::GetInstance().CheckMSAAState();
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = BackBufferFormat;
+	psoDesc.SampleDesc.Count = enableMSAA ? 4 : 1;
+	psoDesc.SampleDesc.Quality = enableMSAA ? (DXRenderDeviceManager::GetInstance().GetMSAAQuality() - 1) : 0;
+	psoDesc.DSVFormat = DepthStencilFormat;
+	ThrowIfFailed(pD3DDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&PSO)));
 }

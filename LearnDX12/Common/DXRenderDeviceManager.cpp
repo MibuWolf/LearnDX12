@@ -85,14 +85,14 @@ void DXRenderDeviceManager::Tick(SystemTimer& Timer)
 {
 }
 
-void DXRenderDeviceManager::Clear(SystemTimer& Timer)
+void DXRenderDeviceManager::Clear(SystemTimer& Timer, ID3D12PipelineState* pPipelineState)
 {
 	// 由于在本函数的最后调用了FlushCommandQueue()，这就可以确保每次调用Render()时,GPU已经将上一帧的所有指令全部执行完成
 	// 因此在绘制新的一帧前，要清理命令/指令分配器 重置命令/指令列表
 	ThrowIfFailed(CmdListAlloc->Reset());
 
 	// 重置命令列表
-	ThrowIfFailed(CommandList->Reset(CmdListAlloc.Get(), nullptr));
+	ThrowIfFailed(CommandList->Reset(CmdListAlloc.Get(), pPipelineState));
 
 	// 由于上一帧绘制完成时会执行交换链的两个缓冲区互换，这就使得之前的用于显示的缓冲区变成了当前帧需要绘制的缓冲
 	// 因此需要将该缓冲区的资源状态改为渲染目标
@@ -137,9 +137,9 @@ void DXRenderDeviceManager::Present(SystemTimer& Timer)
 	FlushCommandQueue();
 }
 
-void DXRenderDeviceManager::ResetCommandList()
+void DXRenderDeviceManager::ResetCommandList(ID3D12PipelineState* pPipelineState)
 {
-	ThrowIfFailed(CommandList->Reset(CmdListAlloc.Get(), nullptr));
+	ThrowIfFailed(CommandList->Reset(CmdListAlloc.Get(), pPipelineState));
 }
 
 void DXRenderDeviceManager::ExecuteCommandQueue()
@@ -377,32 +377,6 @@ void DXRenderDeviceManager::CreateDescriptorHeap()
 	dsvHeapDesc.NodeMask = 0;
 	ThrowIfFailed(D3DDevice->CreateDescriptorHeap(
 		&dsvHeapDesc, IID_PPV_ARGS(DSVHeap.GetAddressOf())));
-
-	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc;				// cbv常量堆的信息类型
-	cbvHeapDesc.NumDescriptors = 1;
-	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-	cbvHeapDesc.NodeMask = 0;
-	ThrowIfFailed(D3DDevice->CreateDescriptorHeap(&cbvHeapDesc,
-		IID_PPV_ARGS(&CBVHeap)));
-
-	mObjectCB = std::make_unique<UploadBuffer<ObjectConstants>>(D3DDevice.Get(), 1, true);
-
-	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
-
-	D3D12_GPU_VIRTUAL_ADDRESS cbAddress = mObjectCB->Resource()->GetGPUVirtualAddress();
-	// Offset to the ith object constant buffer in the buffer.
-	int boxCBufIndex = 0;
-	cbAddress += boxCBufIndex * objCBByteSize;
-
-	D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-	cbvDesc.BufferLocation = cbAddress;
-	cbvDesc.SizeInBytes = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
-
-	D3DDevice->CreateConstantBufferView(
-		&cbvDesc,
-		CBVHeap->GetCPUDescriptorHandleForHeapStart());
-
 }
 
 void DXRenderDeviceManager::CreateBufferDescriptor()
