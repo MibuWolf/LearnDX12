@@ -71,7 +71,7 @@ Microsoft::WRL::ComPtr<ID3D12Resource> d3dUtil::CreateDefaultBuffer(
 	// Describe the data we want to copy into the default buffer.
 	D3D12_SUBRESOURCE_DATA subResourceData = {};
 	subResourceData.pData = initData;
-	subResourceData.RowPitch = byteSize;
+	subResourceData.RowPitch = (LONG_PTR)byteSize;
 	subResourceData.SlicePitch = subResourceData.RowPitch;
 
 	// Schedule to copy the data to the default buffer resource.  At a high level, the helper function UpdateSubresources
@@ -108,8 +108,15 @@ ComPtr<ID3DBlob> d3dUtil::CompileShader(
 
 	ComPtr<ID3DBlob> byteCode = nullptr;
 	ComPtr<ID3DBlob> errors;
-	hr = D3DCompileFromFile(filename.c_str(), defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-		entrypoint.c_str(), target.c_str(), compileFlags, 0, &byteCode, &errors);
+	hr = D3DCompileFromFile(filename.c_str(),		// 扩展名为hlsl的文件路径
+		defines,									// Shader中的宏定义，为高级用法此处多为nullptr,具体用法请参见SDK用法文档
+		D3D_COMPILE_STANDARD_FILE_INCLUDE,			// 标准编译Shader保护头文件信息
+		entrypoint.c_str(),						// 着色器代码中的主函数入口
+		target.c_str(),							// 指定着色器类型和版本信息 eg: vs_5_0 表示shadermode5.0下的顶点着色器
+		compileFlags,								// 编译Flags, eg: 带优化的编译 或者带调试信息的编译等
+		0,										// 预处理效果的高级选项具体用法请参见SDK用法文档
+		&byteCode,								// 返回编译成功的字节码信息
+		&errors);									// 返回编译失败的错误信息
 
 	if (errors != nullptr)
 		OutputDebugStringA((char*)errors->GetBufferPointer());

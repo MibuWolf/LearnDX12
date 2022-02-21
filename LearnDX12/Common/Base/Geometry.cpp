@@ -21,11 +21,13 @@ void Geometry::Draw(SystemTimer& Timer)
 	if (pCommandList == nullptr)
 		return;
 
+	// 将常量缓冲区描述符堆与渲染流水线绑定
 	ID3D12DescriptorHeap* descriptorHeaps[] = { CBVHeap.Get() };
 	pCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-
+	// 将根签名与渲染流水线绑定
 	pCommandList->SetGraphicsRootSignature(RootSignature.Get());
-
+	// 将常量缓冲区中的数据与根描述符列表绑定
+	pCommandList->SetGraphicsRootDescriptorTable(0, CBVHeap->GetGPUDescriptorHandleForHeapStart());
 
 	// 向命令列表中设置顶点缓冲区描述符
 	pCommandList->IASetVertexBuffers(0,	// 该接口支持设置多个缓冲区，此参数表示起始输入缓冲区的索引 
@@ -35,6 +37,7 @@ void Geometry::Draw(SystemTimer& Timer)
 	pCommandList->IASetIndexBuffer(&IndexBufferView);
 	// 指定将要绘制的图元类型
 	pCommandList->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
 	// 以索引方式开始绘制(支持多实例渲染)
 	pCommandList->DrawIndexedInstanced(
 		36,		// 每个绘制实例需要绘制的索引数量	
@@ -158,28 +161,27 @@ void Geometry::CreateConstantBuffers()
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
 
+	ObjectConstantBuffer = std::make_unique<UploadBuffer<ObjectConstants>>(pD3DDevice, 1, true);
+
+	// 常量缓冲区描述符堆
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc;
-	cbvHeapDesc.NumDescriptors = 1;
-	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-	cbvHeapDesc.NodeMask = 0;
+	cbvHeapDesc.NumDescriptors = 1;				// 描述符堆中包括的描述符个数
+	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;	// 描述符类型为CBV常量缓冲区
+	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;	// 此处比较特殊，标明该常量缓冲区是Shader可见的
+	cbvHeapDesc.NodeMask = 0;								
 	ThrowIfFailed(pD3DDevice->CreateDescriptorHeap(&cbvHeapDesc,
 		IID_PPV_ARGS(&CBVHeap)));
 
-
-	ObjectConstantBuffer = std::make_unique<UploadBuffer<ObjectConstants>>(pD3DDevice, 1, true);
-
+	// 根据常量缓冲区中存储的数据结构计算出常量缓冲区大小(256的整数倍)
 	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
-
+	// 获取常量缓冲区的GPU地址
 	D3D12_GPU_VIRTUAL_ADDRESS cbAddress = ObjectConstantBuffer->Resource()->GetGPUVirtualAddress();
-	// Offset to the ith object constant buffer in the buffer.
-	int boxCBufIndex = 0;
-	cbAddress += boxCBufIndex * objCBByteSize;
 
+	// 常量缓冲区描述符描述信息
 	D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-	cbvDesc.BufferLocation = cbAddress;
-	cbvDesc.SizeInBytes = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
-
+	cbvDesc.BufferLocation = cbAddress;		// 常量缓冲区GPU地址
+	cbvDesc.SizeInBytes = objCBByteSize;		// 常量缓冲区大小
+	// 创建常量缓冲区描述符
 	pD3DDevice->CreateConstantBufferView(
 		&cbvDesc,
 		CBVHeap->GetCPUDescriptorHandleForHeapStart());
@@ -193,25 +195,29 @@ void Geometry::CreateRootSignature()
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
 
-	// Shader programs typically require resources as input (constant buffers,
-	// textures, samplers).  The root signature defines the resources the shader
-	// programs expect.  If we think of the shader programs as a function, and
-	// the input resources as function parameters, then the root signature can be
-	// thought of as defining the function signature.  
 
-	// Root parameter can be a table, root descriptor or root constants.
+	// 定义当前着色器仅需要一个根参数(也就是MVP矩阵)
 	CD3DX12_ROOT_PARAMETER slotRootParameter[1];
 
-	// Create a single descriptor table of CBVs.
+	// 创建只有一个CBV(ConstantBufferView)的描述符表
 	CD3DX12_DESCRIPTOR_RANGE cbvTable;
-	cbvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
-	slotRootParameter[0].InitAsDescriptorTable(1, &cbvTable);
+	cbvTable.Init(
+		D3D12_DESCRIPTOR_RANGE_TYPE_CBV,	// 类型为常量缓冲区描述符
+		1,								// 表中仅含一个数据
+		0);								// 将此描述符数据绑定到着色器0号寄存器
 
-	// A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(1, slotRootParameter, 0, nullptr,
+	// 初始化跟参数
+	slotRootParameter[0].InitAsDescriptorTable(1,	// 参数个数
+		&cbvTable);							// 描述符表参数数据
+
+	// 定义根签名信息，一个根签名可以包含多个根参数
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(1,	// 根参数个数
+		slotRootParameter,						// 根参数
+		0, nullptr,							// 采样器格式及采样器
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
-	// create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
+	// 创建仅有一个插槽的根签名，该插槽指向一个仅由一个常量缓冲区组成的描述符区域
+	// 要创建根签名，必须先将根签名的布局序列化，然后使用序列化后的ID3DBlob数据接口创建根签名
 	ComPtr<ID3DBlob> serializedRootSig = nullptr;
 	ComPtr<ID3DBlob> errorBlob = nullptr;
 	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
@@ -222,7 +228,7 @@ void Geometry::CreateRootSignature()
 		::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
 	}
 	ThrowIfFailed(hr);
-
+	// 创建根签名
 	ThrowIfFailed(pD3DDevice->CreateRootSignature(
 		0,
 		serializedRootSig->GetBufferPointer(),

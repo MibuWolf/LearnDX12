@@ -108,6 +108,8 @@ void UpdateGeometry()
 	XMFLOAT4X4 mWorld = MathHelper::Identity4x4();
 	XMFLOAT4X4 mView = MathHelper::Identity4x4();
 	XMFLOAT4X4 mProj = MathHelper::Identity4x4();
+	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * MathHelper::Pi, 1280.0f/ 768.0f, 1.0f, 1000.0f);
+	XMStoreFloat4x4(&mProj, P);
 
 	// Build the view matrix.
 	XMVECTOR pos = XMVectorSet(x, y, z, 1.0f);
