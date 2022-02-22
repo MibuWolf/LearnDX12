@@ -1,5 +1,5 @@
-#include <windows.h>
-#include "Include/SystemTimer.h"
+ï»¿#include <windows.h>
+#include "SystemTimer.h"
 
 
 
@@ -7,13 +7,13 @@ SystemTimer::SystemTimer()
 	: mSecondsPerCount(0.0), mDeltaTime(-1.0), mBaseTime(0),
 	mPausedTime(0), mPrevTime(0), mCurrTime(0), mStopped(false)
 {
-	// ¼ÇÂ¼¸ßÆµ¼ì²âµÄÆµÂÊ
+	// è®°å½•é«˜é¢‘æ£€æµ‹çš„é¢‘ç‡
 	__int64 countsPerSec;
-	QueryPerformanceFrequency((LARGE_INTEGER*)&countsPerSec);	// ·µ»Ø¸ßÆµ¼ì²â1s¼ì²âµÄ´ÎÊıcountsPerSec
-	mSecondsPerCount = 1.0 / (double)countsPerSec;	// ¼ÇÂ¼¼ì²âÆµÂÊÓÃÓÚºóĞø¼ÆËãÖ¡¼ä¸ôÊ±¼ä
+	QueryPerformanceFrequency((LARGE_INTEGER*)&countsPerSec);	// è¿”å›é«˜é¢‘æ£€æµ‹1sæ£€æµ‹çš„æ¬¡æ•°countsPerSec
+	mSecondsPerCount = 1.0 / (double)countsPerSec;	// è®°å½•æ£€æµ‹é¢‘ç‡ç”¨äºåç»­è®¡ç®—å¸§é—´éš”æ—¶é—´
 }
 
-// Í³¼Æ×ÔReset¿ªÊ¼µ½ÏÖÔÚµÄÖ´ĞĞÊ±¼ä(²»°üÀ¨StopÆÚ¼äµÄÊ±¼ä)
+// ç»Ÿè®¡è‡ªResetå¼€å§‹åˆ°ç°åœ¨çš„æ‰§è¡Œæ—¶é—´(ä¸åŒ…æ‹¬StopæœŸé—´çš„æ—¶é—´)
 float SystemTimer::TotalTime()const
 {
 	// If we are stopped, do not count the time that has passed since we stopped.
@@ -108,10 +108,10 @@ void SystemTimer::Tick()
 	QueryPerformanceCounter((LARGE_INTEGER*)&currTime);
 	mCurrTime = currTime;
 
-	// µ±Ç°Ö¡µÄ¸ßÆµ¼ì²â´ÎÊı¼õÈ¥ÉÏÒ»Ö¡Ê±¸ßÆµ¼ì²â´ÎÊı³ËÒÔ¸ßÆµ¼ì²âÆµÂÊ¿ÉÒÔ¼ÆËã³öÁ½Ö¡µÄÊ±¼ä¼ä¸ô
+	// å½“å‰å¸§çš„é«˜é¢‘æ£€æµ‹æ¬¡æ•°å‡å»ä¸Šä¸€å¸§æ—¶é«˜é¢‘æ£€æµ‹æ¬¡æ•°ä¹˜ä»¥é«˜é¢‘æ£€æµ‹é¢‘ç‡å¯ä»¥è®¡ç®—å‡ºä¸¤å¸§çš„æ—¶é—´é—´éš”
 	mDeltaTime = (mCurrTime - mPrevTime) * mSecondsPerCount;
 
-	// ¸üĞÂÉÏÒ»Ö¡¸ßÆµ¼ì²â´ÎÊı
+	// æ›´æ–°ä¸Šä¸€å¸§é«˜é¢‘æ£€æµ‹æ¬¡æ•°
 	mPrevTime = mCurrTime;
 
 	// Force nonnegative.  The DXSDK's CDXUTTimer mentions that if the 
