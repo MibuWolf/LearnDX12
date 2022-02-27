@@ -29,6 +29,8 @@ bool DXRenderDeviceManager::InitD3DDevice(HWND	hwnd)
 
 	OnResize();
 
+	CreateFrameResources();
+
 	return TRUE;
 }
 
@@ -83,10 +85,34 @@ void DXRenderDeviceManager::OnResize()
 
 void DXRenderDeviceManager::Tick(SystemTimer& Timer)
 {
+	// 每帧开始绘制前先将帧资源数组中循环找出下一个帧资
+	// 源索引并获取其相应的帧资源作为当前使用的帧资源
+	CurrentFrameResourceIndex = (CurrentFrameResourceIndex + 1) % NumFrameResources;
+	CurrentFrameResource = FrameResources[CurrentFrameResourceIndex].get();
+
+	// 根据围栏点Fence判断当前GPU是否还在执行此帧资源的命令队列
+	// 每个帧资源(FrameResource)中的Fence默认都为0，每次在CPU向名列列表写完命令后FrameResource中的Fence都会自增1
+	// 因此如果CurrentFrameResource->Fence != 0则CurrentFrameResource一定被写入过命令和资源描述符信息，而当
+	// 围栏Fence的完成值GetCompletedValue()小于CurrentFrameResource->Fence时则表示此帧资源仍被GPU执行使用
+	if (CurrentFrameResource->Fence != 0 && Fence->GetCompletedValue() < CurrentFrameResource->Fence)
+	{
+		HANDLE eventHandle = CreateEventEx(nullptr, false, false, EVENT_ALL_ACCESS);
+		ThrowIfFailed(Fence->SetEventOnCompletion(CurrentFrameResource->Fence, eventHandle));
+		WaitForSingleObject(eventHandle, INFINITE);
+		CloseHandle(eventHandle);
+	}
+
+	// 找到可用帧资源后，继续后续CPU绘制逻辑
 }
 
 void DXRenderDeviceManager::Clear(SystemTimer& Timer, ID3D12PipelineState* pPipelineState)
 {
+	if (CurrentFrameResource == nullptr)
+		return;
+
+	// 将当前帧的绘制渲染指令通过命令列表写入当前帧资源的命令分配器中
+	CmdListAlloc = CurrentFrameResource->CmdListAlloc;
+
 	// 由于在本函数的最后调用了FlushCommandQueue()，这就可以确保每次调用Render()时,GPU已经将上一帧的所有指令全部执行完成
 	// 因此在绘制新的一帧前，要清理命令/指令分配器 重置命令/指令列表
 	ThrowIfFailed(CmdListAlloc->Reset());
@@ -133,8 +159,14 @@ void DXRenderDeviceManager::Present(SystemTimer& Timer)
 	ThrowIfFailed(SwapChain->Present(0, 0));
 	CurrBackBuffer = (CurrBackBuffer + 1) % SWAPCHAINBUFFERCOUNT;
 
-	// 等待GPU完成所有命令队列中的指令后CPU继续执行
-	FlushCommandQueue();
+	//// 等待GPU完成所有命令队列中的指令后CPU继续执行
+	//FlushCommandQueue();
+
+	// 不在需要等待GPU完成所有命令而只需将当前帧资源的围栏点自增1
+	// 并通知GPU此段命令执行完成后的新围栏点即可
+	CurrentFrameResource->Fence = ++CurrentFence;
+
+	CommandQueue->Signal(Fence.Get(), CurrentFence);
 }
 
 void DXRenderDeviceManager::ResetCommandList(ID3D12PipelineState* pPipelineState)
@@ -226,6 +258,32 @@ void DXRenderDeviceManager::FlushCommandQueue()
 		WaitForSingleObject(eventHandle, INFINITE);
 		CloseHandle(eventHandle);
 	}
+}
+
+void DXRenderDeviceManager::UploadRenderPassConstantBuffer(const PassConstants& PassConstantsData)
+{
+	if (CurrentFrameResource == nullptr)
+		return;
+
+	auto RenderPassCB = CurrentFrameResource->PassCB.get();
+
+	if (RenderPassCB == nullptr)
+		return;
+
+	RenderPassCB->CopyData(0, PassConstantsData);
+}
+
+void DXRenderDeviceManager::UploadObjectConstantBuffer(const ObjectConstants& ObjectConstantsData, int ObjectCBIndex)
+{
+	if (CurrentFrameResource == nullptr)
+		return;
+
+	auto CurrObjectCB = CurrentFrameResource->ObjectCB.get();
+
+	if (CurrObjectCB == nullptr)
+		return;
+
+	CurrObjectCB->CopyData(ObjectCBIndex, ObjectConstantsData);
 }
 
 // 初始化D3DDevice
@@ -433,6 +491,28 @@ void DXRenderDeviceManager::CreateBufferDescriptor()
 		D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 	// 将后台缓冲区资源从初始状态设置为写入状态，等待渲染命令对列表写入深度信息
 	CommandList->ResourceBarrier(1, &depthStencilResBarrier);
+}
+
+void DXRenderDeviceManager::CreateFrameResources()
+{
+	for (int i = 0; i < gNumFrameResources; ++i)
+	{
+		FrameResources.push_back(std::make_unique<FrameResource>(D3DDevice.Get(),
+			1, 1));
+	}
+}
+
+FrameResource* DXRenderDeviceManager::GetFrameResource(UINT Index)
+{
+	if(Index >= FrameResources.size())
+		return nullptr;
+
+	return FrameResources[Index].get();
+}
+
+UINT DXRenderDeviceManager::GetConstaantDescriptorSize()
+{
+	return CBVDescriptorSize;
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE DXRenderDeviceManager::GetCurrentBackBufferDescriptor()

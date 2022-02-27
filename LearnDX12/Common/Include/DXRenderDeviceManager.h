@@ -4,6 +4,7 @@
 #include "UploadBuffer.h"
 #include "MathHelper.h"
 #include "SystemTimer.h"
+#include "Base/FrameResource.h"
 #if defined(DEBUG) || defined(_DEBUG)
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
@@ -63,6 +64,18 @@ public:
 	// 刷新GPU命令队列，待GPU命令队列玩成前CPU处于等待避免在GPU完成绘制前，CPU修改资源属性
 	void		FlushCommandQueue();
 
+	// 上传更新RenderPass常量缓冲区到当前的FrameResrouce中
+	void		UploadRenderPassConstantBuffer(const PassConstants& PassConstantsData);
+
+	// 上传更新几何体对象常量缓冲区到当前的FrameResrouce中
+	void		UploadObjectConstantBuffer(const ObjectConstants& ObjectConstantsData, int ObjectCBIndex);
+
+	// 获取帧资源
+	FrameResource* GetFrameResource(UINT Index);
+
+	// 获取常量缓冲区描述符大小
+	UINT		GetConstaantDescriptorSize();
+
 	// 获取当前MASS是否开启
 	bool		CheckMSAAState()
 	{
@@ -109,6 +122,9 @@ protected:
 
 	// 创建缓冲区(后台缓冲区/深度模板缓冲区)描述符
 	void		CreateBufferDescriptor();
+
+	// 创建帧资源数组
+	void		CreateFrameResources();
 
 	// 获取当前后台缓冲区的描述符
 	D3D12_CPU_DESCRIPTOR_HANDLE		GetCurrentBackBufferDescriptor();
@@ -167,4 +183,10 @@ private:
 	int BackBufferWidth = 1280;
 	int BackBufferHeight = 768;
 
+	// 帧资源数组
+	std::vector<std::unique_ptr<FrameResource>> FrameResources;
+	//当前使用的帧资源
+	FrameResource* CurrentFrameResource = nullptr;
+	// 当前帧资源索引
+	int	CurrentFrameResourceIndex = 0;
 };

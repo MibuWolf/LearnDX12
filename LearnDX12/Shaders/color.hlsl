@@ -3,12 +3,34 @@
 //
 // Transforms and colors geometry.
 //***************************************************************************************
+
+
+
 // cbuffer表示是存放在常量缓冲区中的数据，register(b0)表示存放在0号寄存器，b表示类型为常量缓冲区描述符
 // register(b0)表示该数据是存放在0号寄存器的常量缓冲区描述符，其中b表示常量缓冲区，t表示着色器资源描述符
 // s表示采样器，i表示无序访问视图/描述符。
 cbuffer cbPerObject : register(b0)		// 由外部传入的常量，放在常量缓冲区中，后续详细介绍常量缓冲区
 {
-	float4x4 gWorldViewProj;			// 在本示例中，常量值为MVP矩阵
+	float4x4 gWorld;			// 世界空间矩阵
+};
+
+// RenderPass相关参数
+cbuffer cbPass : register(b1)
+{
+    float4x4 gView;
+    float4x4 gInvView;
+    float4x4 gProj;
+    float4x4 gInvProj;
+    float4x4 gViewProj;
+    float4x4 gInvViewProj;
+    float3 gEyePosW;
+    float cbPerObjectPad1;
+    float2 gRenderTargetSize;
+    float2 gInvRenderTargetSize;
+    float gNearZ;
+    float gFarZ;
+    float gTotalTime;
+    float gDeltaTime;
 };
 
 
@@ -38,7 +60,8 @@ VertexOut VS(VertexIn vin)
 	// 经过MVP变换后坐标系来到了齐次空间，注意经过此变换后并非进入NDC空间
 	// 也就是说此时四维坐标中的w并不为1.0f, 将齐次空间坐标转化到NDC空间(也就是
 	// 四维坐标各个分量除以w)是由硬件执行的，此处要特别主要
-	vout.PosH = mul(float4(vin.PosL, 1.0f), gWorldViewProj);
+    float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
+    vout.PosH = mul(posW, gViewProj);
 	
 	// 简单将顶点颜色数据作为输出，经过光栅化后分别映射到每个像素
     vout.Color = vin.Color;

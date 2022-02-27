@@ -5,18 +5,10 @@
 #include "UploadBuffer.h"
 #include "MathHelper.h"
 #include "SystemTimer.h"
+#include "Base/GeometryUtil.h"
 using namespace DirectX;
 
-struct ObjectConstants
-{
-	XMFLOAT4X4 WorldViewProj = MathHelper::Identity4x4();
-};
 
-struct Vertex
-{
-	XMFLOAT3 Pos;
-	XMFLOAT4 Color;
-};
 
 struct Geometry
 {

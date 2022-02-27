@@ -3,6 +3,7 @@
 
 #include "framework.h"
 #include "LearnDX12.h"
+#include "MathHelper.h"
 #include "Base/Geometry.h"
 #include "SystemTimer.h"
 #include "DXRenderDeviceManager.h"
@@ -15,12 +16,25 @@ HWND hWnd;
 SystemTimer systemTimer;
 WCHAR szTitle[MAX_LOADSTRING];                  // 标题栏文本
 WCHAR szWindowClass[MAX_LOADSTRING];            // 主窗口类名
-std::unique_ptr<Geometry> mBoxGeo = nullptr;
+
 float mTheta = 1.5f * XM_PI;
 float mPhi = XM_PIDIV4;
 float mRadius = 5.0f;
+PassConstants MainPassCB;
+// 所有几何体的渲染项
+std::vector<std::unique_ptr<RenderItem>> AllRenderItems;
+XMFLOAT3 EyePos = { 0.0f, 0.0f, 0.0f };
+XMFLOAT4X4	View = MathHelper::Identity4x4();
+XMFLOAT4X4	Proj = MathHelper::Identity4x4();
 
 void UpdateGeometry();
+
+void		UpdateCamera(SystemTimer& Timer);
+void		UpdateRenderPassCB(SystemTimer& Timer);
+void		UpdateObjectCB(SystemTimer& Timer);
+
+void		Tick(SystemTimer& Timer);
+void		Draw(SystemTimer& Timer);
 
 // 此代码模块中包含的函数的前向声明:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -57,9 +71,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	}
 	DXRenderDeviceManager::GetInstance().ResetCommandList();
 
-	mBoxGeo = std::make_unique<Geometry>();
-	mBoxGeo->Initialize();
-
 	DXRenderDeviceManager::GetInstance().ExecuteCommandQueue();
 
 	HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_LEARNDX12));
@@ -77,14 +88,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 			if (msg.message != WM_QUIT)
 			{
 				systemTimer.Tick();
-				DXRenderDeviceManager::GetInstance().Tick(systemTimer);
-				UpdateGeometry();
-				DXRenderDeviceManager::GetInstance().Clear(systemTimer, mBoxGeo ? mBoxGeo->PSO.Get() : nullptr);
-
-				if (mBoxGeo)
-					mBoxGeo->Draw(systemTimer);
-
-				DXRenderDeviceManager::GetInstance().Present(systemTimer);
+				Tick(systemTimer);
+				Draw(systemTimer);
 			}
 		}
 	}
@@ -94,37 +99,86 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 
 
-void UpdateGeometry()
+
+
+void		UpdateCamera(SystemTimer& Timer)
 {
-	if (mBoxGeo == nullptr)
-		return;
-
 	// Convert Spherical to Cartesian coordinates.
-	float x = mRadius * sinf(mPhi) * cosf(mTheta);
-	float z = mRadius * sinf(mPhi) * sinf(mTheta);
-	float y = mRadius * cosf(mPhi);
-
-
-	XMFLOAT4X4 mWorld = MathHelper::Identity4x4();
-	XMFLOAT4X4 mView = MathHelper::Identity4x4();
-	XMFLOAT4X4 mProj = MathHelper::Identity4x4();
-	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * MathHelper::Pi, 1280.0f/ 768.0f, 1.0f, 1000.0f);
-	XMStoreFloat4x4(&mProj, P);
+	EyePos.x = mRadius * sinf(mPhi) * cosf(mTheta);
+	EyePos.z = mRadius * sinf(mPhi) * sinf(mTheta);
+	EyePos.y = mRadius * cosf(mPhi);
 
 	// Build the view matrix.
-	XMVECTOR pos = XMVectorSet(x, y, z, 1.0f);
+	XMVECTOR pos = XMVectorSet(EyePos.x, EyePos.y, EyePos.z, 1.0f);
 	XMVECTOR target = XMVectorZero();
 	XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 
 	XMMATRIX view = XMMatrixLookAtLH(pos, target, up);
-	XMStoreFloat4x4(&mView, view);
-
-	XMMATRIX world = XMLoadFloat4x4(&mWorld);
-	XMMATRIX proj = XMLoadFloat4x4(&mProj);
-	XMMATRIX worldViewProj = world * view * proj;
-
-	mBoxGeo->SetMatrixParameter(worldViewProj);
+	XMStoreFloat4x4(&View, view);
 }
+
+// 跟新RenderPass参数并将数据上传到常量缓冲区
+void		UpdateRenderPassCB(SystemTimer& Timer)
+{
+	XMMATRIX view = XMLoadFloat4x4(&View);
+	XMMATRIX proj = XMLoadFloat4x4(&Proj);
+
+	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
+	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
+	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(proj), proj);
+	XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(viewProj), viewProj);
+
+	XMStoreFloat4x4(&MainPassCB.View, XMMatrixTranspose(view));
+	XMStoreFloat4x4(&MainPassCB.InvView, XMMatrixTranspose(invView));
+	XMStoreFloat4x4(&MainPassCB.Proj, XMMatrixTranspose(proj));
+	XMStoreFloat4x4(&MainPassCB.InvProj, XMMatrixTranspose(invProj));
+	XMStoreFloat4x4(&MainPassCB.ViewProj, XMMatrixTranspose(viewProj));
+	XMStoreFloat4x4(&MainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
+	MainPassCB.EyePosW = EyePos;
+	MainPassCB.RenderTargetSize = XMFLOAT2(1280.0f, 768.0f);
+	MainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / 1280.0f, 1.0f / 768.0f);
+	MainPassCB.NearZ = 1.0f;
+	MainPassCB.FarZ = 1000.0f;
+	MainPassCB.TotalTime = Timer.TotalTime();
+	MainPassCB.DeltaTime = Timer.DeltaTime();
+
+	// 对上传到常量缓冲区的代码接口封装，具体方法请参照顶点缓冲区的数据上传方式
+	DXRenderDeviceManager::GetInstance().UploadRenderPassConstantBuffer(MainPassCB);
+}
+
+void		UpdateObjectCB(SystemTimer& Timer)
+{
+	for (auto& Item : AllRenderItems)
+	{
+		// 仅仅当当前帧此对象常量缓冲区发生变化时才需要更新
+		if (Item->NumFramesDirty > 0)
+		{
+			XMMATRIX world = XMLoadFloat4x4(&Item->World);
+
+			ObjectConstants objConstants;
+			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
+
+			DXRenderDeviceManager::GetInstance().UploadObjectConstantBuffer(objConstants, Item->ObjCBIndex);
+		}
+	}
+}
+
+void		Tick(SystemTimer& Timer)
+{
+	DXRenderDeviceManager::GetInstance().Tick(Timer);
+}
+
+
+void		Draw(SystemTimer& Timer)
+{
+	DXRenderDeviceManager::GetInstance().Clear(systemTimer, mBoxGeo ? mBoxGeo->PSO.Get() : nullptr);
+
+	if (mBoxGeo)
+		mBoxGeo->Draw(systemTimer);
+
+	DXRenderDeviceManager::GetInstance().Present(systemTimer);
+}
+
 
 //
 //  函数: MyRegisterClass()
