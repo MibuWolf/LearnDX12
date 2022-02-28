@@ -40,6 +40,9 @@ public:
 	// 初始化渲染设备设备
 	virtual	bool	InitD3DDevice(HWND	hwnd);
 
+	// 创建帧资源数组
+	void		CreateFrameResources(UINT ObjectCount);
+
 	// 重置后台缓冲区大小
 	virtual void	OnResize();
 
@@ -70,11 +73,17 @@ public:
 	// 上传更新几何体对象常量缓冲区到当前的FrameResrouce中
 	void		UploadObjectConstantBuffer(const ObjectConstants& ObjectConstantsData, int ObjectCBIndex);
 
+	// 获取当前帧资源
+	FrameResource* GetCurrentFrameResource();
+
+	// 获取当前帧资源索引
+	UINT		GetCurrentFrameResourceIndex();
+
 	// 获取帧资源
 	FrameResource* GetFrameResource(UINT Index);
 
 	// 获取常量缓冲区描述符大小
-	UINT		GetConstaantDescriptorSize();
+	UINT		GetConstantDescriptorSize();
 
 	// 获取当前MASS是否开启
 	bool		CheckMSAAState()
@@ -123,8 +132,6 @@ protected:
 	// 创建缓冲区(后台缓冲区/深度模板缓冲区)描述符
 	void		CreateBufferDescriptor();
 
-	// 创建帧资源数组
-	void		CreateFrameResources();
 
 	// 获取当前后台缓冲区的描述符
 	D3D12_CPU_DESCRIPTOR_HANDLE		GetCurrentBackBufferDescriptor();

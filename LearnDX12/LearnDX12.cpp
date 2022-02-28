@@ -7,7 +7,8 @@
 #include "Base/Geometry.h"
 #include "SystemTimer.h"
 #include "DXRenderDeviceManager.h"
-
+#include "Base/RenderPass.h"
+#include <WindowsX.h>
 #define MAX_LOADSTRING 100
 
 // 全局变量:
@@ -18,20 +19,17 @@ WCHAR szTitle[MAX_LOADSTRING];                  // 标题栏文本
 WCHAR szWindowClass[MAX_LOADSTRING];            // 主窗口类名
 
 float mTheta = 1.5f * XM_PI;
-float mPhi = XM_PIDIV4;
-float mRadius = 5.0f;
-PassConstants MainPassCB;
-// 所有几何体的渲染项
-std::vector<std::unique_ptr<RenderItem>> AllRenderItems;
+float mPhi = 0.2f * XM_PI;
+float mRadius = 15.0f;
+POINT mLastMousePos;
+
 XMFLOAT3 EyePos = { 0.0f, 0.0f, 0.0f };
 XMFLOAT4X4	View = MathHelper::Identity4x4();
 XMFLOAT4X4	Proj = MathHelper::Identity4x4();
 
-void UpdateGeometry();
+std::unique_ptr<RenderPass> pRenderPass = nullptr;
 
 void		UpdateCamera(SystemTimer& Timer);
-void		UpdateRenderPassCB(SystemTimer& Timer);
-void		UpdateObjectCB(SystemTimer& Timer);
 
 void		Tick(SystemTimer& Timer);
 void		Draw(SystemTimer& Timer);
@@ -42,6 +40,9 @@ BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
+void OnMouseDown(WPARAM btnState, int x, int y);
+void OnMouseUp(WPARAM btnState, int x, int y);
+void OnMouseMove(WPARAM btnState, int x, int y);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	_In_opt_ HINSTANCE hPrevInstance,
@@ -70,10 +71,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		return FALSE;
 	}
 	DXRenderDeviceManager::GetInstance().ResetCommandList();
-
+	pRenderPass = std::make_unique<RenderPass>();
+	pRenderPass->Initialize();
 	DXRenderDeviceManager::GetInstance().ExecuteCommandQueue();
 
 	HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_LEARNDX12));
+
+	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * MathHelper::Pi, 1280.0f / 768.0f, 1.0f, 1000.0f);
+	XMStoreFloat4x4(&Proj, P);
 
 	MSG msg;
 
@@ -117,64 +122,23 @@ void		UpdateCamera(SystemTimer& Timer)
 	XMStoreFloat4x4(&View, view);
 }
 
-// 跟新RenderPass参数并将数据上传到常量缓冲区
-void		UpdateRenderPassCB(SystemTimer& Timer)
-{
-	XMMATRIX view = XMLoadFloat4x4(&View);
-	XMMATRIX proj = XMLoadFloat4x4(&Proj);
-
-	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
-	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
-	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(proj), proj);
-	XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(viewProj), viewProj);
-
-	XMStoreFloat4x4(&MainPassCB.View, XMMatrixTranspose(view));
-	XMStoreFloat4x4(&MainPassCB.InvView, XMMatrixTranspose(invView));
-	XMStoreFloat4x4(&MainPassCB.Proj, XMMatrixTranspose(proj));
-	XMStoreFloat4x4(&MainPassCB.InvProj, XMMatrixTranspose(invProj));
-	XMStoreFloat4x4(&MainPassCB.ViewProj, XMMatrixTranspose(viewProj));
-	XMStoreFloat4x4(&MainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
-	MainPassCB.EyePosW = EyePos;
-	MainPassCB.RenderTargetSize = XMFLOAT2(1280.0f, 768.0f);
-	MainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / 1280.0f, 1.0f / 768.0f);
-	MainPassCB.NearZ = 1.0f;
-	MainPassCB.FarZ = 1000.0f;
-	MainPassCB.TotalTime = Timer.TotalTime();
-	MainPassCB.DeltaTime = Timer.DeltaTime();
-
-	// 对上传到常量缓冲区的代码接口封装，具体方法请参照顶点缓冲区的数据上传方式
-	DXRenderDeviceManager::GetInstance().UploadRenderPassConstantBuffer(MainPassCB);
-}
-
-void		UpdateObjectCB(SystemTimer& Timer)
-{
-	for (auto& Item : AllRenderItems)
-	{
-		// 仅仅当当前帧此对象常量缓冲区发生变化时才需要更新
-		if (Item->NumFramesDirty > 0)
-		{
-			XMMATRIX world = XMLoadFloat4x4(&Item->World);
-
-			ObjectConstants objConstants;
-			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
-
-			DXRenderDeviceManager::GetInstance().UploadObjectConstantBuffer(objConstants, Item->ObjCBIndex);
-		}
-	}
-}
 
 void		Tick(SystemTimer& Timer)
 {
 	DXRenderDeviceManager::GetInstance().Tick(Timer);
+	UpdateCamera(Timer);
+
+	if (pRenderPass)
+		pRenderPass->Tick(Timer, View, Proj, EyePos);
 }
 
 
 void		Draw(SystemTimer& Timer)
 {
-	DXRenderDeviceManager::GetInstance().Clear(systemTimer, mBoxGeo ? mBoxGeo->PSO.Get() : nullptr);
+	DXRenderDeviceManager::GetInstance().Clear(systemTimer, nullptr);
 
-	if (mBoxGeo)
-		mBoxGeo->Draw(systemTimer);
+	if (pRenderPass)
+		pRenderPass->Draw(systemTimer);
 
 	DXRenderDeviceManager::GetInstance().Present(systemTimer);
 }
@@ -284,6 +248,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
+	case WM_LBUTTONDOWN:
+	case WM_MBUTTONDOWN:
+	case WM_RBUTTONDOWN:
+		OnMouseDown(wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+		return 0;
+	case WM_LBUTTONUP:
+	case WM_MBUTTONUP:
+	case WM_RBUTTONUP:
+		OnMouseUp(wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+		return 0;
+	case WM_MOUSEMOVE:
+		OnMouseMove(wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+		return 0;
 	default:
 		return DefWindowProc(hWnd, message, wParam, lParam);
 	}
@@ -308,4 +285,49 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	}
 	return (INT_PTR)FALSE;
+}
+
+void OnMouseDown(WPARAM btnState, int x, int y)
+{
+	mLastMousePos.x = x;
+	mLastMousePos.y = y;
+
+	SetCapture(hWnd);
+}
+
+void OnMouseUp(WPARAM btnState, int x, int y)
+{
+	ReleaseCapture();
+}
+
+void OnMouseMove(WPARAM btnState, int x, int y)
+{
+	if ((btnState & MK_LBUTTON) != 0)
+	{
+		// Make each pixel correspond to a quarter of a degree.
+		float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
+		float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
+
+		// Update angles based on input to orbit camera around box.
+		mTheta += dx;
+		mPhi += dy;
+
+		// Restrict the angle mPhi.
+		mPhi = MathHelper::Clamp(mPhi, 0.1f, MathHelper::Pi - 0.1f);
+	}
+	else if ((btnState & MK_RBUTTON) != 0)
+	{
+		// Make each pixel correspond to 0.2 unit in the scene.
+		float dx = 0.05f * static_cast<float>(x - mLastMousePos.x);
+		float dy = 0.05f * static_cast<float>(y - mLastMousePos.y);
+
+		// Update the camera radius based on input.
+		mRadius += dx - dy;
+
+		// Restrict the radius.
+		mRadius = MathHelper::Clamp(mRadius, 5.0f, 150.0f);
+	}
+
+	mLastMousePos.x = x;
+	mLastMousePos.y = y;
 }

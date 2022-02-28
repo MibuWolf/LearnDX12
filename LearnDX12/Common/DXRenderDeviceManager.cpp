@@ -29,8 +29,6 @@ bool DXRenderDeviceManager::InitD3DDevice(HWND	hwnd)
 
 	OnResize();
 
-	CreateFrameResources();
-
 	return TRUE;
 }
 
@@ -87,7 +85,7 @@ void DXRenderDeviceManager::Tick(SystemTimer& Timer)
 {
 	// 每帧开始绘制前先将帧资源数组中循环找出下一个帧资
 	// 源索引并获取其相应的帧资源作为当前使用的帧资源
-	CurrentFrameResourceIndex = (CurrentFrameResourceIndex + 1) % NumFrameResources;
+	CurrentFrameResourceIndex = (CurrentFrameResourceIndex + 1) % gNumFrameResources;
 	CurrentFrameResource = FrameResources[CurrentFrameResourceIndex].get();
 
 	// 根据围栏点Fence判断当前GPU是否还在执行此帧资源的命令队列
@@ -96,7 +94,7 @@ void DXRenderDeviceManager::Tick(SystemTimer& Timer)
 	// 围栏Fence的完成值GetCompletedValue()小于CurrentFrameResource->Fence时则表示此帧资源仍被GPU执行使用
 	if (CurrentFrameResource->Fence != 0 && Fence->GetCompletedValue() < CurrentFrameResource->Fence)
 	{
-		HANDLE eventHandle = CreateEventEx(nullptr, false, false, EVENT_ALL_ACCESS);
+		HANDLE eventHandle = CreateEventEx(nullptr, LPCWSTR("GPUFence"), false, EVENT_ALL_ACCESS);
 		ThrowIfFailed(Fence->SetEventOnCompletion(CurrentFrameResource->Fence, eventHandle));
 		WaitForSingleObject(eventHandle, INFINITE);
 		CloseHandle(eventHandle);
@@ -284,6 +282,16 @@ void DXRenderDeviceManager::UploadObjectConstantBuffer(const ObjectConstants& Ob
 		return;
 
 	CurrObjectCB->CopyData(ObjectCBIndex, ObjectConstantsData);
+}
+
+FrameResource* DXRenderDeviceManager::GetCurrentFrameResource()
+{
+	return CurrentFrameResource;
+}
+
+UINT DXRenderDeviceManager::GetCurrentFrameResourceIndex()
+{
+	return CurrentFrameResourceIndex;
 }
 
 // 初始化D3DDevice
@@ -493,24 +501,24 @@ void DXRenderDeviceManager::CreateBufferDescriptor()
 	CommandList->ResourceBarrier(1, &depthStencilResBarrier);
 }
 
-void DXRenderDeviceManager::CreateFrameResources()
+void DXRenderDeviceManager::CreateFrameResources(UINT ObjectCount)
 {
 	for (int i = 0; i < gNumFrameResources; ++i)
 	{
 		FrameResources.push_back(std::make_unique<FrameResource>(D3DDevice.Get(),
-			1, 1));
+			1, ObjectCount));
 	}
 }
 
 FrameResource* DXRenderDeviceManager::GetFrameResource(UINT Index)
 {
-	if(Index >= FrameResources.size())
+	if (Index >= FrameResources.size())
 		return nullptr;
 
 	return FrameResources[Index].get();
 }
 
-UINT DXRenderDeviceManager::GetConstaantDescriptorSize()
+UINT DXRenderDeviceManager::GetConstantDescriptorSize()
 {
 	return CBVDescriptorSize;
 }

@@ -1,7 +1,7 @@
-#pragma once
+﻿#pragma once
 #include "Geometry.h"
 #include "FrameResource.h"
-
+#include "SystemTimer.h"
 
 class RenderPass
 {
@@ -13,9 +13,13 @@ public:
 
 public:
 
-	void		InitRenderPass();
+	void		Initialize();
 
-	void		DrawRenderItems();
+	ID3D12PipelineState* GetRenderPassPSO();
+
+	void		Tick(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
+
+	void		Draw(const SystemTimer& Timer);
 
 protected:
 
@@ -27,7 +31,10 @@ protected:
 	void		BuildConstantBufferViews();
 	void		BuildPSOs();
 
+	void		TickRenderPass(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
+	void		TickRenderItems(const SystemTimer& Timer);
 
+	void		DrawRenderItems(const SystemTimer& Timer);
 
 private:
 
@@ -39,7 +46,11 @@ private:
 	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> PSOs;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayout;
 
-	std::vector<std::unique_ptr<RenderItem>> AllRitems;
+	PassConstants MainPassCB;
+	UINT PassCBVOffset = 0;
+	bool IsWireframe = false;
+
+	std::vector<std::unique_ptr<RenderItem>> AllRItems;
 	std::vector<RenderItem*> OpaqueRitems;
 
 	UINT PassCbvOffset = 0;

@@ -29,7 +29,7 @@
 //#include "DDSTextureLoader.h"
 #include "MathHelper.h"
 
-extern const int gNumFrameResources = 3;
+const int gNumFrameResources = 3;
 
 using namespace Microsoft::WRL;
 using namespace DirectX;

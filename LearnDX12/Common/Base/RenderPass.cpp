@@ -1,4 +1,4 @@
-#include "Base/RenderPass.h"
+ï»¿#include "Base/RenderPass.h"
 #include "DXRenderDeviceManager.h"
 #include "Base/GeometryGenerator.h"
 
@@ -15,23 +15,68 @@ RenderPass::~RenderPass()
 }
 
 
-void RenderPass::InitRenderPass()
+void RenderPass::Initialize()
 {
 	BuildRootSignature();
 	BuildShadersAndInputLayout();
 	BuildShapeGeometry();
 	BuildRenderItems();
+	DXRenderDeviceManager::GetInstance().CreateFrameResources(OpaqueRitems.size());
 	BuildDescriptorHeaps();
 	BuildConstantBufferViews();
 	BuildPSOs();
 }
 
-
-void RenderPass::DrawRenderItems()
+ID3D12PipelineState* RenderPass::GetRenderPassPSO()
 {
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+	if (pCommandList == nullptr)
+		return nullptr;
 
+	if (IsWireframe)
+	{
+		return PSOs["opaque_wireframe"].Get();
+	}
+
+	return PSOs["opaque"].Get();
 }
 
+void RenderPass::Tick(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos)
+{
+	TickRenderItems(Timer);
+	TickRenderPass(Timer, View, Proj, EyePos);
+}
+
+void RenderPass::Draw(const SystemTimer& Timer)
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+	FrameResource* CurrentFrameResource = DXRenderDeviceManager::GetInstance().GetCurrentFrameResource();
+	if (pD3DDevice == nullptr || pCommandList == nullptr || CurrentFrameResource == nullptr)
+		return;
+
+	UINT FrameResourceIndex = DXRenderDeviceManager::GetInstance().GetCurrentFrameResourceIndex();
+	UINT ConstantDDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
+
+	if (IsWireframe)
+	{
+		pCommandList->SetPipelineState(PSOs["opaque_wireframe"].Get());
+	}
+	else
+	{
+		pCommandList->SetPipelineState(PSOs["opaque"].Get());
+	}
+
+	ID3D12DescriptorHeap* descriptorHeaps[] = { CBVHeap.Get() };
+	pCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+	pCommandList->SetGraphicsRootSignature(RootSignature.Get());
+	int passCbvIndex = PassCbvOffset + FrameResourceIndex;
+	auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(CBVHeap->GetGPUDescriptorHandleForHeapStart());
+	passCbvHandle.Offset(passCbvIndex, ConstantDDescriptorSize);
+	pCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
+
+	DrawRenderItems(Timer);
+}
 
 
 
@@ -43,21 +88,21 @@ void RenderPass::BuildRootSignature()
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
 
-	// ÃèÊö·û±í
+	// æè¿°ç¬¦è¡¨
 	CD3DX12_DESCRIPTOR_RANGE cbvTable0;
 	cbvTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
 
 	CD3DX12_DESCRIPTOR_RANGE cbvTable1;
 	cbvTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 1);
 
-	// 2¸ö¸ù²ÎÊý
+	// 2ä¸ªæ ¹å‚æ•°
 	CD3DX12_ROOT_PARAMETER slotRootParameter[2];
 
-	//Á½¸ö¸ù²ÎÊý¶¼ÎªÃèÊö·û±í
+	//ä¸¤ä¸ªæ ¹å‚æ•°éƒ½ä¸ºæè¿°ç¬¦è¡¨
 	slotRootParameter[0].InitAsDescriptorTable(1, &cbvTable0);
 	slotRootParameter[1].InitAsDescriptorTable(1, &cbvTable1);
 
-	//  ¸ùÇ©ÃûÃèÊöÐÅÏ¢ÐòÁÐ»¯²¢´´½¨¸ùÃèÊö·û
+	//  æ ¹ç­¾åæè¿°ä¿¡æ¯åºåˆ—åŒ–å¹¶åˆ›å»ºæ ¹æè¿°ç¬¦
 	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(2, slotRootParameter, 0, nullptr,
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -233,7 +278,7 @@ void RenderPass::BuildRenderItems()
 	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
-	AllRitems.push_back(std::move(boxRitem));
+	AllRItems.push_back(std::move(boxRitem));
 
 	auto gridRitem = std::make_unique<RenderItem>();
 	gridRitem->World = MathHelper::Identity4x4();
@@ -243,7 +288,7 @@ void RenderPass::BuildRenderItems()
 	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
 	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
 	gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
-	AllRitems.push_back(std::move(gridRitem));
+	AllRItems.push_back(std::move(gridRitem));
 
 	UINT objCBIndex = 2;
 	for (int i = 0; i < 5; ++i)
@@ -291,14 +336,14 @@ void RenderPass::BuildRenderItems()
 		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
 		rightSphereRitem->BaseVertexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 
-		AllRitems.push_back(std::move(leftCylRitem));
-		AllRitems.push_back(std::move(rightCylRitem));
-		AllRitems.push_back(std::move(leftSphereRitem));
-		AllRitems.push_back(std::move(rightSphereRitem));
+		AllRItems.push_back(std::move(leftCylRitem));
+		AllRItems.push_back(std::move(rightCylRitem));
+		AllRItems.push_back(std::move(leftSphereRitem));
+		AllRItems.push_back(std::move(rightSphereRitem));
 	}
 
 	// All the render items are opaque.
-	for (auto& e : AllRitems)
+	for (auto& e : AllRItems)
 		OpaqueRitems.push_back(e.get());
 }
 
@@ -312,17 +357,17 @@ void RenderPass::BuildDescriptorHeaps()
 
 	UINT objCount = (UINT)OpaqueRitems.size();
 
-	// ÎªÃ¿¸ö¼¸ºÎ¶ÔÏó´´½¨Ò»¸öÕë¶Ô¸Ã¶ÔÏóµÄ³£Á¿»º³åÇø£¬ÎªËùÓÐ¼¸ºÎ¶ÔÏó
-	// ËùÔÚµÄrenderpass´´½¨Ò»¸örenderpassµÄ³£Á¿»º³åÇø£¬ÒòÎª×Ü¹²
-	// ÓÐgNumFrameResources¸öFrameResource£¬ÐèÒªÎªÃ¿¸öFrameResource¶¼Òª
-	// ´´½¨ÏàÓ¦µÄ³£Á¿»º³åÇø
+	// ä¸ºæ¯ä¸ªå‡ ä½•å¯¹è±¡åˆ›å»ºä¸€ä¸ªé’ˆå¯¹è¯¥å¯¹è±¡çš„å¸¸é‡ç¼“å†²åŒºï¼Œä¸ºæ‰€æœ‰å‡ ä½•å¯¹è±¡
+	// æ‰€åœ¨çš„renderpassåˆ›å»ºä¸€ä¸ªrenderpassçš„å¸¸é‡ç¼“å†²åŒºï¼Œå› ä¸ºæ€»å…±
+	// æœ‰gNumFrameResourcesä¸ªFrameResourceï¼Œéœ€è¦ä¸ºæ¯ä¸ªFrameResourceéƒ½è¦
+	// åˆ›å»ºç›¸åº”çš„å¸¸é‡ç¼“å†²åŒº
 	UINT numDescriptors = (objCount + 1) * gNumFrameResources;
 
 	// Save an offset to the start of the pass CBVs.  These are the last 3 descriptors.
 	PassCbvOffset = objCount * gNumFrameResources;
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc;
-	cbvHeapDesc.NumDescriptors = numDescriptors;			// ´´½¨numDescriptors¸ö³£Á¿»º³åÇøÃèÊö·û
+	cbvHeapDesc.NumDescriptors = numDescriptors;			// åˆ›å»ºnumDescriptorsä¸ªå¸¸é‡ç¼“å†²åŒºæè¿°ç¬¦
 	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	cbvHeapDesc.NodeMask = 0;
@@ -337,7 +382,7 @@ void RenderPass::BuildConstantBufferViews()
 	if (pD3DDevice == nullptr)
 		return;
 
-	UINT ConstantDDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstaantDescriptorSize();
+	UINT ConstantDDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
 	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
 
 	UINT objCount = (UINT)OpaqueRitems.size();
@@ -441,4 +486,103 @@ void RenderPass::BuildPSOs()
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueWireframePsoDesc = opaquePsoDesc;
 	opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 	ThrowIfFailed(pD3DDevice->CreateGraphicsPipelineState(&opaqueWireframePsoDesc, IID_PPV_ARGS(&PSOs["opaque_wireframe"])));
+}
+
+
+
+void RenderPass::TickRenderPass(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos)
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	FrameResource* CurrentFrameRender = DXRenderDeviceManager::GetInstance().GetCurrentFrameResource();
+	if (pD3DDevice == nullptr || CurrentFrameRender == nullptr)
+		return;
+
+	XMMATRIX view = XMLoadFloat4x4(&View);
+	XMMATRIX proj = XMLoadFloat4x4(&Proj);
+
+	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
+	XMVECTOR viewVec = XMMatrixDeterminant(view);
+	XMVECTOR projVec = XMMatrixDeterminant(proj);
+	XMVECTOR viewProjVec = XMMatrixDeterminant(viewProj);
+	XMMATRIX invView = XMMatrixInverse(&viewVec, view);
+	XMMATRIX invProj = XMMatrixInverse(&projVec, proj);
+	XMMATRIX invViewProj = XMMatrixInverse(&viewProjVec, viewProj);
+
+	XMStoreFloat4x4(&MainPassCB.View, XMMatrixTranspose(view));
+	XMStoreFloat4x4(&MainPassCB.InvView, XMMatrixTranspose(invView));
+	XMStoreFloat4x4(&MainPassCB.Proj, XMMatrixTranspose(proj));
+	XMStoreFloat4x4(&MainPassCB.InvProj, XMMatrixTranspose(invProj));
+	XMStoreFloat4x4(&MainPassCB.ViewProj, XMMatrixTranspose(viewProj));
+	XMStoreFloat4x4(&MainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
+	MainPassCB.EyePosW = EyePos;
+	MainPassCB.RenderTargetSize = XMFLOAT2((float)1280.0f, (float)768.0f);
+	MainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / 1280.0f, 1.0f / 768.0f);
+	MainPassCB.NearZ = 1.0f;
+	MainPassCB.FarZ = 1000.0f;
+	MainPassCB.TotalTime = Timer.TotalTime();
+	MainPassCB.DeltaTime = Timer.DeltaTime();
+
+	auto currPassCB = CurrentFrameRender->PassCB.get();
+	currPassCB->CopyData(0, MainPassCB);
+}
+
+void RenderPass::TickRenderItems(const SystemTimer& Timer)
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	FrameResource* CurrentFrameRender = DXRenderDeviceManager::GetInstance().GetCurrentFrameResource();
+	if (pD3DDevice == nullptr || CurrentFrameRender == nullptr)
+		return;
+
+	auto currObjectCB = CurrentFrameRender->ObjectCB.get();
+	for (auto& Item : AllRItems)
+	{
+		// Only update the cbuffer data if the constants have changed.  
+		// This needs to be tracked per frame resource.
+		if (Item->NumFramesDirty > 0)
+		{
+			XMMATRIX world = XMLoadFloat4x4(&Item->World);
+
+			ObjectConstants objConstants;
+			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
+
+			currObjectCB->CopyData(Item->ObjCBIndex, objConstants);
+
+			// Next FrameResource need to be updated too.
+			Item->NumFramesDirty--;
+		}
+	}
+}
+
+void RenderPass::DrawRenderItems(const SystemTimer& Timer)
+{
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+	FrameResource* CurrentFrameResource = DXRenderDeviceManager::GetInstance().GetCurrentFrameResource();
+	UINT FrameResourceIndex = DXRenderDeviceManager::GetInstance().GetCurrentFrameResourceIndex();
+	if (pCommandList == nullptr || CurrentFrameResource == nullptr)
+		return;
+
+	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+	UINT ConstantDDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
+	auto objectCB = CurrentFrameResource->ObjectCB->Resource();
+
+	// For each render item...
+	for (size_t i = 0; i < OpaqueRitems.size(); ++i)
+	{
+		auto ri = OpaqueRitems[i];
+
+		D3D12_VERTEX_BUFFER_VIEW riVertixView = ri->Geo->VertexBufferView();
+		D3D12_INDEX_BUFFER_VIEW riIndexView = ri->Geo->IndexBufferView();
+		pCommandList->IASetVertexBuffers(0, 1, &riVertixView);
+		pCommandList->IASetIndexBuffer(&riIndexView);
+		pCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
+
+		// Offset to the CBV in the descriptor heap for this object and for this frame resource.
+		UINT cbvIndex = FrameResourceIndex * (UINT)OpaqueRitems.size() + ri->ObjCBIndex;
+		auto cbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(CBVHeap->GetGPUDescriptorHandleForHeapStart());
+		cbvHandle.Offset(cbvIndex, ConstantDDescriptorSize);
+
+		pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+
+		pCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+	}
 }

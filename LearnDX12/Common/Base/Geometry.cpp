@@ -51,7 +51,7 @@ void Geometry::Draw(SystemTimer& Timer)
 void Geometry::SetMatrixParameter(XMMATRIX& worldViewProj)
 {
 	ObjectConstants objConstants;
-	XMStoreFloat4x4(&objConstants.WorldViewProj, XMMatrixTranspose(worldViewProj));
+	XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(worldViewProj));
 	ObjectConstantBuffer->CopyData(0, objConstants);
 }
 
@@ -168,7 +168,7 @@ void Geometry::CreateConstantBuffers()
 	cbvHeapDesc.NumDescriptors = 1;				// 描述符堆中包括的描述符个数
 	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;	// 描述符类型为CBV常量缓冲区
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;	// 此处比较特殊，标明该常量缓冲区是Shader可见的
-	cbvHeapDesc.NodeMask = 0;								
+	cbvHeapDesc.NodeMask = 0;
 	ThrowIfFailed(pD3DDevice->CreateDescriptorHeap(&cbvHeapDesc,
 		IID_PPV_ARGS(&CBVHeap)));
 
