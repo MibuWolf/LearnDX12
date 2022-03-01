@@ -1,30 +1,34 @@
-#pragma once
+ï»¿#pragma once
 #include "DX12Util.h"
 #include "MathHelper.h"
 #include "UploadBuffer.h"
 #include "GeometryUtil.h"
 
 
-// Ö¡×ÊÔ´ÓÃÓÚ¼ÇÂ¼ºÍ´æ´¢CPUÎª¹¹½¨Ã¿Ö¡ÃüÁîÁĞ±íËùĞèµÄ×ÊÔ´¼°ÃüÁîĞÅÏ¢
+// å¸§èµ„æºç”¨äºè®°å½•å’Œå­˜å‚¨CPUä¸ºæ„å»ºæ¯å¸§å‘½ä»¤åˆ—è¡¨æ‰€éœ€çš„èµ„æºåŠå‘½ä»¤ä¿¡æ¯
 struct FrameResource
 {
 public:
 
-    FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount);
-    FrameResource(const FrameResource& rhs) = delete;
-    FrameResource& operator=(const FrameResource& rhs) = delete;
-    ~FrameResource();
+	FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount);
+	FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT waveVertCount);
+	FrameResource(const FrameResource& rhs) = delete;
+	FrameResource& operator=(const FrameResource& rhs) = delete;
+	~FrameResource();
 
-    // Ã¿Ö¡¶¼ĞèÒªÓĞ¸ö¶ÀÁ¢µÄÃüÁî·ÖÅäÆ÷ÓÃÓÚ¼ÇÂ¼µ±Ç°Ö¡CPUÒªÖ´ĞĞµÄCommandĞÅÏ¢
-    // Èç¹ûGPUÕıÔÚÊ¹ÓÃµ±Ç°ÃüÁî·ÖÅäÆ÷½øĞĞ»æÖÆ£¬ÔòÔÚ»æÖÆÍê³ÉÇ°CPU²»¿ÉÔÙ¶ÔÆäÖØÖÃ»òĞŞ¸Ä
-    ComPtr<ID3D12CommandAllocator> CmdListAlloc;
+	// æ¯å¸§éƒ½éœ€è¦æœ‰ä¸ªç‹¬ç«‹çš„å‘½ä»¤åˆ†é…å™¨ç”¨äºè®°å½•å½“å‰å¸§CPUè¦æ‰§è¡Œçš„Commandä¿¡æ¯
+	// å¦‚æœGPUæ­£åœ¨ä½¿ç”¨å½“å‰å‘½ä»¤åˆ†é…å™¨è¿›è¡Œç»˜åˆ¶ï¼Œåˆ™åœ¨ç»˜åˆ¶å®Œæˆå‰CPUä¸å¯å†å¯¹å…¶é‡ç½®æˆ–ä¿®æ”¹
+	ComPtr<ID3D12CommandAllocator> CmdListAlloc;
 
-    // äÖÈ¾Ã¿Ò»Ö¡Ê±ĞèÒªÉèÖÃµÄ³£Á¿»º³åÇøÖĞµÄÊı¾İ»ò×ÊÔ´
-    // Í¬ÑùÈç¹ûGPUÕıÔÚÊ¹ÓÃµ±Ç°ÃüÁî·ÖÅäÆ÷½øĞĞ»æÖÆ£¬ÔòÔÚ»æÖÆÍê³ÉÇ°CPU²»¿ÉÔÙ¶ÔÆäÖØÖÃ»òĞŞ¸Ä
-    std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
-    std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
+	// æ¸²æŸ“æ¯ä¸€å¸§æ—¶éœ€è¦è®¾ç½®çš„å¸¸é‡ç¼“å†²åŒºä¸­çš„æ•°æ®æˆ–èµ„æº
+	// åŒæ ·å¦‚æœGPUæ­£åœ¨ä½¿ç”¨å½“å‰å‘½ä»¤åˆ†é…å™¨è¿›è¡Œç»˜åˆ¶ï¼Œåˆ™åœ¨ç»˜åˆ¶å®Œæˆå‰CPUä¸å¯å†å¯¹å…¶é‡ç½®æˆ–ä¿®æ”¹
+	std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
+	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
 
-    // ¼ÇÂ¼µ±Ç°Ö¡Ëù´¦µÄÎ§À¸µãĞÅÏ¢£¬ÓÃÓÚÅĞ¶Ïµ±Ç°GPUÊÇ·ñÈÔÔÚÊ¹ÓÃ¸ÃÖ¡×ÊÔ´Êı¾İ
-    // ÅĞ¶Ï·½Ê½ÓëDXRenderDeviceManager::FlushCommandQueue()ÏàÍ¬
-    UINT64 Fence = 0;
+	// ç”¨äºå­˜å‚¨åŠ¨æ€çš„é¡¶ç‚¹æ•°æ®çš„ç¼“å†²åŒº
+	std::unique_ptr<UploadBuffer<Vertex>> WavesVB = nullptr;
+
+	// è®°å½•å½“å‰å¸§æ‰€å¤„çš„å›´æ ç‚¹ä¿¡æ¯ï¼Œç”¨äºåˆ¤æ–­å½“å‰GPUæ˜¯å¦ä»åœ¨ä½¿ç”¨è¯¥å¸§èµ„æºæ•°æ®
+	// åˆ¤æ–­æ–¹å¼ä¸DXRenderDeviceManager::FlushCommandQueue()ç›¸åŒ
+	UINT64 Fence = 0;
 };

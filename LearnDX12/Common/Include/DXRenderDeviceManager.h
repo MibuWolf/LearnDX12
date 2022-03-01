@@ -43,6 +43,9 @@ public:
 	// 创建帧资源数组
 	void		CreateFrameResources(UINT ObjectCount);
 
+	// 创建帧资源数组
+	void		CreateFrameResources(UINT passCount, UINT ObjectCount, UINT waveVertexCount);
+
 	// 重置后台缓冲区大小
 	virtual void	OnResize();
 

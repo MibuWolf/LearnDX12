@@ -510,6 +510,15 @@ void DXRenderDeviceManager::CreateFrameResources(UINT ObjectCount)
 	}
 }
 
+void DXRenderDeviceManager::CreateFrameResources(UINT passCount, UINT ObjectCount, UINT waveVertexCount)
+{
+	for (int i = 0; i < gNumFrameResources; ++i)
+	{
+		FrameResources.push_back(std::make_unique<FrameResource>(D3DDevice.Get(),
+			passCount, ObjectCount, waveVertexCount));
+	}
+}
+
 FrameResource* DXRenderDeviceManager::GetFrameResource(UINT Index)
 {
 	if (Index >= FrameResources.size())

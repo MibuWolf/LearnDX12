@@ -34,7 +34,7 @@ protected:
 
 	virtual void		DrawRenderItems(const SystemTimer& Timer);
 
-private:
+protected:
 
 	ComPtr<ID3D12RootSignature> RootSignature = nullptr;
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> Geometries;
