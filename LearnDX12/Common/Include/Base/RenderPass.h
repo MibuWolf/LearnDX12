@@ -9,32 +9,30 @@ public:
 
 	RenderPass();
 
-	~RenderPass();
+	virtual ~RenderPass();
 
 public:
 
-	void		Initialize();
+	virtual void		Initialize();
 
-	ID3D12PipelineState* GetRenderPassPSO();
+	virtual void		Tick(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
 
-	void		Tick(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
-
-	void		Draw(const SystemTimer& Timer);
+	virtual void		Draw(const SystemTimer& Timer);
 
 protected:
 
-	void		BuildRootSignature();
-	void		BuildShadersAndInputLayout();
-	void		BuildShapeGeometry();
-	void		BuildRenderItems();
-	void		BuildDescriptorHeaps();
-	void		BuildConstantBufferViews();
-	void		BuildPSOs();
+	virtual void		BuildRootSignature();
+	virtual void		BuildShadersAndInputLayout();
+	virtual void		BuildShapeGeometry();
+	virtual void		BuildRenderItems();
+	virtual void		BuildDescriptorHeaps();
+	virtual void		BuildConstantBufferViews();
+	virtual void		BuildPSOs();
 
-	void		TickRenderPass(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
-	void		TickRenderItems(const SystemTimer& Timer);
+	virtual void		TickRenderPass(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
+	virtual void		TickRenderItems(const SystemTimer& Timer);
 
-	void		DrawRenderItems(const SystemTimer& Timer);
+	virtual void		DrawRenderItems(const SystemTimer& Timer);
 
 private:
 
@@ -47,7 +45,6 @@ private:
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayout;
 
 	PassConstants MainPassCB;
-	UINT PassCBVOffset = 0;
 	bool IsWireframe = false;
 
 	std::vector<std::unique_ptr<RenderItem>> AllRItems;

@@ -17,29 +17,24 @@ RenderPass::~RenderPass()
 
 void RenderPass::Initialize()
 {
+	// 创建根签名
 	BuildRootSignature();
+	// 编译着色器并设置着色器输入顶点参数布局
 	BuildShadersAndInputLayout();
+	// 构建基本静态模型网格信息(将所有静态模型的顶点放到一个顶点缓冲区，索引也整合到一个索引缓冲区)
 	BuildShapeGeometry();
+	// 为每个网格模型的渲染实例记录渲染项信息
 	BuildRenderItems();
+	// 创建一个renderpass常量缓冲区和OpaqueRitems.size()个对象常量缓冲区的帧资源
 	DXRenderDeviceManager::GetInstance().CreateFrameResources(OpaqueRitems.size());
+	// 为三个FrameRender(每个FrameRender分别有对象常量缓冲区和RenderPass常量缓冲区两个缓冲区)的常量缓冲区创建描述符堆
 	BuildDescriptorHeaps();
+	// 为三个FrameRender中的每个缓冲区创建描述符并存储在描述符堆中
 	BuildConstantBufferViews();
+	// 创建针对RenderPass的渲染管线状态对象
 	BuildPSOs();
 }
 
-ID3D12PipelineState* RenderPass::GetRenderPassPSO()
-{
-	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
-	if (pCommandList == nullptr)
-		return nullptr;
-
-	if (IsWireframe)
-	{
-		return PSOs["opaque_wireframe"].Get();
-	}
-
-	return PSOs["opaque"].Get();
-}
 
 void RenderPass::Tick(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos)
 {
@@ -146,24 +141,21 @@ void RenderPass::BuildShapeGeometry()
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
 
+	// 根据程序计算出各种形状几何体的顶点和索引数据
 	GeometryGenerator geoGen;
 	GeometryGenerator::MeshData box = geoGen.CreateBox(1.5f, 0.5f, 1.5f, 3);
 	GeometryGenerator::MeshData grid = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
 	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
 	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
 
-	//
-	// We are concatenating all the geometry into one big vertex/index buffer.  So
-	// define the regions in the buffer each submesh covers.
-	//
+	// 我们将所有的顶点/索引数据存储在一个大的顶点/缩影缓冲区中
+	// 因此我们需要记录每个几何模型的顶点/索引偏移值
 
-	// Cache the vertex offsets to each object in the concatenated vertex buffer.
 	UINT boxVertexOffset = 0;
 	UINT gridVertexOffset = (UINT)box.Vertices.size();
 	UINT sphereVertexOffset = gridVertexOffset + (UINT)grid.Vertices.size();
 	UINT cylinderVertexOffset = sphereVertexOffset + (UINT)sphere.Vertices.size();
 
-	// Cache the starting index for each object in the concatenated index buffer.
 	UINT boxIndexOffset = 0;
 	UINT gridIndexOffset = (UINT)box.Indices32.size();
 	UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
@@ -399,7 +391,7 @@ void RenderPass::BuildConstantBufferViews()
 		{
 			D3D12_GPU_VIRTUAL_ADDRESS cbAddress = objectCB->GetGPUVirtualAddress();
 
-			// Offset to the ith object constant buffer in the buffer.
+			// 常量缓冲区资源描述符大小objCBByteSize
 			cbAddress += i * objCBByteSize;
 
 			// Offset to the object cbv in the descriptor heap.
