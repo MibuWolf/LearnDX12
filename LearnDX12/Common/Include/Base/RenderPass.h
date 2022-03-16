@@ -24,6 +24,7 @@ protected:
 	virtual void		BuildRootSignature();
 	virtual void		BuildShadersAndInputLayout();
 	virtual void		BuildShapeGeometry();
+	virtual void		BuildMaterials();
 	virtual void		BuildRenderItems();
 	virtual void		BuildDescriptorHeaps();
 	virtual void		BuildConstantBufferViews();
@@ -31,6 +32,7 @@ protected:
 
 	virtual void		TickRenderPass(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
 	virtual void		TickRenderItems(const SystemTimer& Timer);
+	virtual void		TickMaterials(const SystemTimer& Timer);
 
 	virtual void		DrawRenderItems(const SystemTimer& Timer);
 
@@ -38,6 +40,7 @@ protected:
 
 	ComPtr<ID3D12RootSignature> RootSignature = nullptr;
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> Geometries;
+	std::unordered_map<std::string, std::unique_ptr<Material>> Materials;
 	ComPtr<ID3D12DescriptorHeap> CBVHeap = nullptr;
 	ComPtr<ID3D12DescriptorHeap> SRVDescriptorHeap = nullptr;
 	std::unordered_map<std::string, ComPtr<ID3DBlob>> Shaders;

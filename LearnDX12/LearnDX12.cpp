@@ -8,7 +8,7 @@
 #include "SystemTimer.h"
 #include "DXRenderDeviceManager.h"
 #include "Base/RenderPass.h"
-#include "WavesRenderPass.h"
+//#include "WavesRenderPass.h"
 #include <WindowsX.h>
 #define MAX_LOADSTRING 100
 
@@ -29,7 +29,7 @@ XMFLOAT4X4	View = MathHelper::Identity4x4();
 XMFLOAT4X4	Proj = MathHelper::Identity4x4();
 
 std::unique_ptr<RenderPass> pRenderPass = nullptr;
-std::unique_ptr<WavesRenderPass> pWavesRenderPass = nullptr;
+//std::unique_ptr<WavesRenderPass> pWavesRenderPass = nullptr;
 
 void		UpdateCamera(SystemTimer& Timer);
 
@@ -73,11 +73,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		return FALSE;
 	}
 	DXRenderDeviceManager::GetInstance().ResetCommandList();
-	//pRenderPass = std::make_unique<RenderPass>();
-	//pRenderPass->Initialize();
+	pRenderPass = std::make_unique<RenderPass>();
+	pRenderPass->Initialize();
 
-	pWavesRenderPass = std::make_unique<WavesRenderPass>();
-	pWavesRenderPass->Initialize();
+	//pWavesRenderPass = std::make_unique<WavesRenderPass>();
+	//pWavesRenderPass->Initialize();
 
 	DXRenderDeviceManager::GetInstance().ExecuteCommandQueue();
 
@@ -134,11 +134,11 @@ void		Tick(SystemTimer& Timer)
 	DXRenderDeviceManager::GetInstance().Tick(Timer);
 	UpdateCamera(Timer);
 
-	//if (pRenderPass)
-	//	pRenderPass->Tick(Timer, View, Proj, EyePos);
+	if (pRenderPass)
+		pRenderPass->Tick(Timer, View, Proj, EyePos);
 
-	if (pWavesRenderPass)
-		pWavesRenderPass->Tick(Timer, View, Proj, EyePos);
+	//if (pWavesRenderPass)
+	//	pWavesRenderPass->Tick(Timer, View, Proj, EyePos);
 }
 
 
@@ -146,11 +146,11 @@ void		Draw(SystemTimer& Timer)
 {
 	DXRenderDeviceManager::GetInstance().Clear(systemTimer, nullptr);
 
-	//if (pRenderPass)
-	//	pRenderPass->Draw(systemTimer);
+	if (pRenderPass)
+		pRenderPass->Draw(systemTimer);
 
-	if (pWavesRenderPass)
-		pWavesRenderPass->Draw(systemTimer);
+	//if (pWavesRenderPass)
+	//	pWavesRenderPass->Draw(systemTimer);
 
 	DXRenderDeviceManager::GetInstance().Present(systemTimer);
 }

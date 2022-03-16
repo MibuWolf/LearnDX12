@@ -9,6 +9,21 @@ struct ObjectConstants
     XMFLOAT4X4 World = MathHelper::Identity4x4();   // 每个几何对象的世界空间矩阵
 };
 
+
+// 在常量缓冲区中存储的材质数据
+struct MaterialConstants
+{
+    // 漫反射反照率
+    DirectX::XMFLOAT4 DiffuseAlbedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+    // 0°反射率
+    DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
+    // 粗糙度
+    float Roughness = 0.25f;
+
+    // Used in texture mapping.
+    DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
+};
+
 // 为后期光照计算与其他效果计算增加一些常用数据
 struct PassConstants
 {
@@ -26,12 +41,21 @@ struct PassConstants
     float FarZ = 0.0f;                                   // 远截面
     float TotalTime = 0.0f;                              // 总游戏时间
     float DeltaTime = 0.0f;                              // 当前帧间隔时间
+
+    // 环境光颜色
+    DirectX::XMFLOAT4 AmbientLight = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+    // 最多支持MaxLights盏灯，前NUM_DIR_LIGHTS个为平行光
+    // [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS)个为点光源
+    // [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)为探照灯
+    // 因此增加每种灯光时放置在数组对应位置，在着色器中对每盏灯光按其所处的数组位置取不同灯光类型计算
+    Light Lights[MaxLights];
 };
 
 struct Vertex
 {
     XMFLOAT3 Pos;
-    XMFLOAT4 Color;
+    DirectX::XMFLOAT3 Normal;
 };
 
 
@@ -56,6 +80,8 @@ struct RenderItem
     UINT ObjCBIndex = -1;
     // 当前渲染物体的模型信息
     MeshGeometry* Geo = nullptr;
+    // 材质信息
+    Material* Mat = nullptr;
 
     // 当前模型要绘制的图元类型
     D3D12_PRIMITIVE_TOPOLOGY PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;

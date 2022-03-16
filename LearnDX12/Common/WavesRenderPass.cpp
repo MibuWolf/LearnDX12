@@ -21,6 +21,7 @@ void WavesRenderPass::Initialize()
 	BuildRootSignature();
 	BuildShadersAndInputLayout();
 	BuildShapeGeometry();
+	BuildMaterials();
 	BuildRenderItems();
 	BuildRenderItems();
 	BuildFrameResources();
@@ -161,27 +162,27 @@ void WavesRenderPass::BuildLandGeometry()
 		if (vertices[i].Pos.y < -10.0f)
 		{
 			// Sandy beach color.
-			vertices[i].Color = XMFLOAT4(1.0f, 0.96f, 0.62f, 1.0f);
+			vertices[i].Normal = XMFLOAT3(1.0f, 0.96f, 0.62f);
 		}
 		else if (vertices[i].Pos.y < 5.0f)
 		{
 			// Light yellow-green.
-			vertices[i].Color = XMFLOAT4(0.48f, 0.77f, 0.46f, 1.0f);
+			vertices[i].Normal = XMFLOAT3(0.48f, 0.77f, 0.46f);
 		}
 		else if (vertices[i].Pos.y < 12.0f)
 		{
 			// Dark yellow-green.
-			vertices[i].Color = XMFLOAT4(0.1f, 0.48f, 0.19f, 1.0f);
+			vertices[i].Normal = XMFLOAT3(0.1f, 0.48f, 0.19f);
 		}
 		else if (vertices[i].Pos.y < 20.0f)
 		{
 			// Dark brown.
-			vertices[i].Color = XMFLOAT4(0.45f, 0.39f, 0.34f, 1.0f);
+			vertices[i].Normal = XMFLOAT3(0.45f, 0.39f, 0.34f);
 		}
 		else
 		{
 			// White snow.
-			vertices[i].Color = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+			vertices[i].Normal = XMFLOAT3(1.0f, 1.0f, 1.0f);
 		}
 	}
 
@@ -284,7 +285,7 @@ void WavesRenderPass::BuildWavesGeometryBuffers()
 
 void WavesRenderPass::BuildFrameResources()
 {
-	DXRenderDeviceManager::GetInstance().CreateFrameResources(1, AllRItems.size(), mWaves->VertexCount());
+	DXRenderDeviceManager::GetInstance().CreateFrameResources(1, AllRItems.size(), Materials.size(), mWaves->VertexCount());
 }
 
 void WavesRenderPass::UpdateWaves(const SystemTimer& Timer)
@@ -318,7 +319,7 @@ void WavesRenderPass::UpdateWaves(const SystemTimer& Timer)
 		Vertex v;
 
 		v.Pos = mWaves->Position(i);
-		v.Color = XMFLOAT4(DirectX::Colors::Blue);
+		v.Normal = XMFLOAT3(0.0f, 1.0f, 0.0f);
 
 		currWavesVB->CopyData(i, v);
 	}

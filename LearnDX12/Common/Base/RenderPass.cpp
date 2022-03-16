@@ -23,10 +23,12 @@ void RenderPass::Initialize()
 	BuildShadersAndInputLayout();
 	// 构建基本静态模型网格信息(将所有静态模型的顶点放到一个顶点缓冲区，索引也整合到一个索引缓冲区)
 	BuildShapeGeometry();
+	// 初始化材质信息
+	BuildMaterials();
 	// 为每个网格模型的渲染实例记录渲染项信息
 	BuildRenderItems();
 	// 创建一个renderpass常量缓冲区和OpaqueRitems.size()个对象常量缓冲区的帧资源
-	DXRenderDeviceManager::GetInstance().CreateFrameResources(OpaqueRitems.size());
+	DXRenderDeviceManager::GetInstance().CreateFrameResources(OpaqueRitems.size(), Materials.size());
 	// 为三个FrameRender(每个FrameRender分别有对象常量缓冲区和RenderPass常量缓冲区两个缓冲区)的常量缓冲区创建描述符堆
 	BuildDescriptorHeaps();
 	// 为三个FrameRender中的每个缓冲区创建描述符并存储在描述符堆中
@@ -39,6 +41,7 @@ void RenderPass::Initialize()
 void RenderPass::Tick(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos)
 {
 	TickRenderItems(Timer);
+	TickMaterials(Timer);
 	TickRenderPass(Timer, View, Proj, EyePos);
 }
 
@@ -68,7 +71,7 @@ void RenderPass::Draw(const SystemTimer& Timer)
 	int passCbvIndex = PassCbvOffset + FrameResourceIndex;
 	auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(CBVHeap->GetGPUDescriptorHandleForHeapStart());
 	passCbvHandle.Offset(passCbvIndex, ConstantDDescriptorSize);
-	pCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
+	pCommandList->SetGraphicsRootDescriptorTable(2, passCbvHandle);
 
 	DrawRenderItems(Timer);
 }
@@ -90,15 +93,19 @@ void RenderPass::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE cbvTable1;
 	cbvTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 1);
 
-	// 2个根参数
-	CD3DX12_ROOT_PARAMETER slotRootParameter[2];
+	CD3DX12_DESCRIPTOR_RANGE cbvTable2;
+	cbvTable2.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 2);
+
+	// 3个根参数(增加材质参数)
+	CD3DX12_ROOT_PARAMETER slotRootParameter[3];
 
 	//两个根参数都为描述符表
 	slotRootParameter[0].InitAsDescriptorTable(1, &cbvTable0);
 	slotRootParameter[1].InitAsDescriptorTable(1, &cbvTable1);
+	slotRootParameter[2].InitAsDescriptorTable(1, &cbvTable2);
 
 	//  根签名描述信息序列化并创建根描述符
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(2, slotRootParameter, 0, nullptr,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(3, slotRootParameter, 0, nullptr,
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
 	ComPtr<ID3DBlob> serializedRootSig = nullptr;
@@ -122,13 +129,20 @@ void RenderPass::BuildRootSignature()
 
 void RenderPass::BuildShadersAndInputLayout()
 {
-	Shaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", nullptr, "VS", "vs_5_1");
-	Shaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", nullptr, "PS", "ps_5_1");
+	const D3D_SHADER_MACRO alphaTestDefines[] =
+	{
+		"ALPHA_TEST", "1",
+		NULL, NULL
+	};
+
+	Shaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
+	Shaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
 
 	InputLayout =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
 }
 
@@ -201,25 +215,25 @@ void RenderPass::BuildShapeGeometry()
 	for (size_t i = 0; i < box.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = box.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::DarkGreen);
+		vertices[k].Normal = box.Vertices[i].Normal;
 	}
 
 	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = grid.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::ForestGreen);
+		vertices[k].Normal = grid.Vertices[i].Normal;
 	}
 
 	for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = sphere.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::Crimson);
+		vertices[k].Normal = sphere.Vertices[i].Normal;
 	}
 
 	for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = cylinder.Vertices[i].Position;
-		vertices[k].Color = XMFLOAT4(DirectX::Colors::SteelBlue);
+		vertices[k].Normal = cylinder.Vertices[i].Normal;
 	}
 
 	std::vector<std::uint16_t> indices;
@@ -259,6 +273,46 @@ void RenderPass::BuildShapeGeometry()
 	Geometries[geo->Name] = std::move(geo);
 }
 
+void RenderPass::BuildMaterials()
+{
+	auto bricks0 = std::make_unique<Material>();
+	bricks0->Name = "bricks0";
+	bricks0->MatCBIndex = 0;
+	bricks0->DiffuseSrvHeapIndex = 0;
+	bricks0->DiffuseAlbedo = XMFLOAT4(Colors::ForestGreen);
+	bricks0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
+	bricks0->Roughness = 0.1f;
+
+	auto stone0 = std::make_unique<Material>();
+	stone0->Name = "stone0";
+	stone0->MatCBIndex = 1;
+	stone0->DiffuseSrvHeapIndex = 1;
+	stone0->DiffuseAlbedo = XMFLOAT4(Colors::LightSteelBlue);
+	stone0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
+	stone0->Roughness = 0.3f;
+
+	auto tile0 = std::make_unique<Material>();
+	tile0->Name = "tile0";
+	tile0->MatCBIndex = 2;
+	tile0->DiffuseSrvHeapIndex = 2;
+	tile0->DiffuseAlbedo = XMFLOAT4(Colors::LightGray);
+	tile0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
+	tile0->Roughness = 0.2f;
+
+	auto skullMat = std::make_unique<Material>();
+	skullMat->Name = "skullMat";
+	skullMat->MatCBIndex = 3;
+	skullMat->DiffuseSrvHeapIndex = 3;
+	skullMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	skullMat->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05);
+	skullMat->Roughness = 0.3f;
+
+	Materials["bricks0"] = std::move(bricks0);
+	Materials["stone0"] = std::move(stone0);
+	Materials["tile0"] = std::move(tile0);
+	Materials["skullMat"] = std::move(skullMat);
+}
+
 
 void RenderPass::BuildRenderItems()
 {
@@ -266,6 +320,7 @@ void RenderPass::BuildRenderItems()
 	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f));
 	boxRitem->ObjCBIndex = 0;
 	boxRitem->Geo = Geometries["shapeGeo"].get();
+	boxRitem->Mat = Materials["stone0"].get();
 	boxRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
@@ -276,6 +331,7 @@ void RenderPass::BuildRenderItems()
 	gridRitem->World = MathHelper::Identity4x4();
 	gridRitem->ObjCBIndex = 1;
 	gridRitem->Geo = Geometries["shapeGeo"].get();
+	gridRitem->Mat = Materials["tile0"].get();
 	gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
 	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
@@ -299,6 +355,7 @@ void RenderPass::BuildRenderItems()
 		XMStoreFloat4x4(&leftCylRitem->World, rightCylWorld);
 		leftCylRitem->ObjCBIndex = objCBIndex++;
 		leftCylRitem->Geo = Geometries["shapeGeo"].get();
+		leftCylRitem->Mat = Materials["skullMat"].get();
 		leftCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
 		leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -307,6 +364,7 @@ void RenderPass::BuildRenderItems()
 		XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
 		rightCylRitem->ObjCBIndex = objCBIndex++;
 		rightCylRitem->Geo = Geometries["shapeGeo"].get();
+		rightCylRitem->Mat = Materials["skullMat"].get();
 		rightCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
 		rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -315,6 +373,7 @@ void RenderPass::BuildRenderItems()
 		XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
 		leftSphereRitem->ObjCBIndex = objCBIndex++;
 		leftSphereRitem->Geo = Geometries["shapeGeo"].get();
+		leftSphereRitem->Mat = Materials["bricks0"].get();
 		leftSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -323,6 +382,7 @@ void RenderPass::BuildRenderItems()
 		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
 		rightSphereRitem->ObjCBIndex = objCBIndex++;
 		rightSphereRitem->Geo = Geometries["shapeGeo"].get();
+		rightSphereRitem->Mat = Materials["bricks0"].get();
 		rightSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -348,15 +408,16 @@ void RenderPass::BuildDescriptorHeaps()
 		return;
 
 	UINT objCount = (UINT)OpaqueRitems.size();
+	UINT matCount = (UINT)Materials.size();
 
 	// 为每个几何对象创建一个针对该对象的常量缓冲区，为所有几何对象
 	// 所在的renderpass创建一个renderpass的常量缓冲区，因为总共
 	// 有gNumFrameResources个FrameResource，需要为每个FrameResource都要
 	// 创建相应的常量缓冲区
-	UINT numDescriptors = (objCount + 1) * gNumFrameResources;
+	UINT numDescriptors = (objCount + matCount + 1) * gNumFrameResources;
 
 	// Save an offset to the start of the pass CBVs.  These are the last 3 descriptors.
-	PassCbvOffset = objCount * gNumFrameResources;
+	PassCbvOffset = (objCount + matCount)* gNumFrameResources;
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc;
 	cbvHeapDesc.NumDescriptors = numDescriptors;			// 创建numDescriptors个常量缓冲区描述符
@@ -376,8 +437,10 @@ void RenderPass::BuildConstantBufferViews()
 
 	UINT ConstantDDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
 	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+	UINT matCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
 
 	UINT objCount = (UINT)OpaqueRitems.size();
+	UINT matCount = (UINT)Materials.size();
 
 	// Need a CBV descriptor for each object for each frame resource.
 	for (int frameIndex = 0; frameIndex < gNumFrameResources; ++frameIndex)
@@ -395,13 +458,33 @@ void RenderPass::BuildConstantBufferViews()
 			cbAddress += i * objCBByteSize;
 
 			// Offset to the object cbv in the descriptor heap.
-			int heapIndex = frameIndex * objCount + i;
+			int heapIndex = frameIndex * objCount + frameIndex * matCount + i;
 			auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(CBVHeap->GetCPUDescriptorHandleForHeapStart());
 			handle.Offset(heapIndex, ConstantDDescriptorSize);
 
 			D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
 			cbvDesc.BufferLocation = cbAddress;
 			cbvDesc.SizeInBytes = objCBByteSize;
+
+			pD3DDevice->CreateConstantBufferView(&cbvDesc, handle);
+		}
+
+		auto materialCB = FrameRes->MaterialCB->Resource();
+		for (UINT i = 0; i < matCount; ++i)
+		{
+			D3D12_GPU_VIRTUAL_ADDRESS cbAddress = materialCB->GetGPUVirtualAddress();
+
+			// 常量缓冲区资源描述符大小objCBByteSize
+			cbAddress += i * matCBByteSize;
+
+			// Offset to the object cbv in the descriptor heap.
+			int heapIndex = (frameIndex + 1) * objCount + frameIndex * matCount + i;
+			auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(CBVHeap->GetCPUDescriptorHandleForHeapStart());
+			handle.Offset(heapIndex, ConstantDDescriptorSize);
+
+			D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
+			cbvDesc.BufferLocation = cbAddress;
+			cbvDesc.SizeInBytes = matCBByteSize;
 
 			pD3DDevice->CreateConstantBufferView(&cbvDesc, handle);
 		}
@@ -458,7 +541,7 @@ void RenderPass::BuildPSOs()
 	};
 	bool enableMSAA = DXRenderDeviceManager::GetInstance().CheckMSAAState();
 	opaquePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	opaquePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+	opaquePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
 	opaquePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	opaquePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	opaquePsoDesc.SampleMask = UINT_MAX;
@@ -476,7 +559,7 @@ void RenderPass::BuildPSOs()
 	//
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueWireframePsoDesc = opaquePsoDesc;
-	opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+	opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
 	ThrowIfFailed(pD3DDevice->CreateGraphicsPipelineState(&opaqueWireframePsoDesc, IID_PPV_ARGS(&PSOs["opaque_wireframe"])));
 }
 
@@ -514,6 +597,14 @@ void RenderPass::TickRenderPass(const SystemTimer& Timer, const XMFLOAT4X4& View
 	MainPassCB.TotalTime = Timer.TotalTime();
 	MainPassCB.DeltaTime = Timer.DeltaTime();
 
+	MainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
+	MainPassCB.Lights[0].Direction = { 0.57735f, -0.57735f, 0.57735f };
+	MainPassCB.Lights[0].Strength = { 0.6f, 0.6f, 0.6f };
+	MainPassCB.Lights[1].Direction = { -0.57735f, -0.57735f, 0.57735f };
+	MainPassCB.Lights[1].Strength = { 0.3f, 0.3f, 0.3f };
+	MainPassCB.Lights[2].Direction = { 0.0f, -0.707f, -0.707f };
+	MainPassCB.Lights[2].Strength = { 0.15f, 0.15f, 0.15f };
+
 	auto currPassCB = CurrentFrameRender->PassCB.get();
 	currPassCB->CopyData(0, MainPassCB);
 }
@@ -545,6 +636,37 @@ void RenderPass::TickRenderItems(const SystemTimer& Timer)
 	}
 }
 
+void RenderPass::TickMaterials(const SystemTimer& Timer)
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	FrameResource* CurrentFrameRender = DXRenderDeviceManager::GetInstance().GetCurrentFrameResource();
+	if (pD3DDevice == nullptr || CurrentFrameRender == nullptr)
+		return;
+
+	auto currMatCB = CurrentFrameRender->MaterialCB.get();
+	for (auto& e : Materials)
+	{
+		// Only update the cbuffer data if the constants have changed.  If the cbuffer
+		// data changes, it needs to be updated for each FrameResource.
+		Material* mat = e.second.get();
+		if (mat->NumFramesDirty > 0)
+		{
+			XMMATRIX matTransform = XMLoadFloat4x4(&mat->MatTransform);
+
+			MaterialConstants matConstants;
+			matConstants.DiffuseAlbedo = mat->DiffuseAlbedo;
+			matConstants.FresnelR0 = mat->FresnelR0;
+			matConstants.Roughness = mat->Roughness;
+			XMStoreFloat4x4(&matConstants.MatTransform, XMMatrixTranspose(matTransform));
+
+			currMatCB->CopyData(mat->MatCBIndex, matConstants);
+
+			// Next FrameResource need to be updated too.
+			mat->NumFramesDirty--;
+		}
+	}
+}
+
 void RenderPass::DrawRenderItems(const SystemTimer& Timer)
 {
 	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
@@ -554,6 +676,7 @@ void RenderPass::DrawRenderItems(const SystemTimer& Timer)
 		return;
 
 	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+	UINT matCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
 	UINT ConstantDDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
 	auto objectCB = CurrentFrameResource->ObjectCB->Resource();
 
@@ -569,11 +692,15 @@ void RenderPass::DrawRenderItems(const SystemTimer& Timer)
 		pCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
 
 		// Offset to the CBV in the descriptor heap for this object and for this frame resource.
-		UINT cbvIndex = FrameResourceIndex * (UINT)OpaqueRitems.size() + ri->ObjCBIndex;
+		UINT cbvIndex = FrameResourceIndex * ((UINT)OpaqueRitems.size() + (UINT)Materials.size()) + ri->ObjCBIndex;
 		auto cbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(CBVHeap->GetGPUDescriptorHandleForHeapStart());
 		cbvHandle.Offset(cbvIndex, ConstantDDescriptorSize);
 
 		pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+		UINT cbvMatIndex = (FrameResourceIndex+1) * (UINT)OpaqueRitems.size() + FrameResourceIndex* (UINT)Materials.size() +  ri->Mat->MatCBIndex;
+		auto cbvMatHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(CBVHeap->GetGPUDescriptorHandleForHeapStart());
+		cbvMatHandle.Offset(cbvMatIndex, ConstantDDescriptorSize);
+		pCommandList->SetGraphicsRootDescriptorTable(1, cbvMatHandle);
 
 		pCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
 	}

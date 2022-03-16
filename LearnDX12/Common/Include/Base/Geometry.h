@@ -89,8 +89,6 @@ protected:
 	// 创建Shader
 	void	CreateShader();
 
-	// 创建顶点/索引缓冲区
-	void	CreateVertexAndIndexBuffer();
 
 	// 创建PSO
 	void	CreatePSO();

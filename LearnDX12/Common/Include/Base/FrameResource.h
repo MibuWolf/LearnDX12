@@ -10,8 +10,8 @@ struct FrameResource
 {
 public:
 
-	FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount);
-	FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT waveVertCount);
+	FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT materialCount);
+	FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT materialCount, UINT waveVertCount);
 	FrameResource(const FrameResource& rhs) = delete;
 	FrameResource& operator=(const FrameResource& rhs) = delete;
 	~FrameResource();
@@ -23,6 +23,7 @@ public:
 	// 渲染每一帧时需要设置的常量缓冲区中的数据或资源
 	// 同样如果GPU正在使用当前命令分配器进行绘制，则在绘制完成前CPU不可再对其重置或修改
 	std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
+	std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
 
 	// 用于存储动态的顶点数据的缓冲区
