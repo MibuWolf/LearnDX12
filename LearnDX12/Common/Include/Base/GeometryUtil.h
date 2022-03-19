@@ -7,6 +7,7 @@
 struct ObjectConstants
 {
     XMFLOAT4X4 World = MathHelper::Identity4x4();   // 每个几何对象的世界空间矩阵
+    XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
 };
 
 
@@ -56,6 +57,7 @@ struct Vertex
 {
     XMFLOAT3 Pos;
     DirectX::XMFLOAT3 Normal;
+    DirectX::XMFLOAT2 TexC;
 };
 
 
@@ -71,6 +73,8 @@ struct RenderItem
 
     // 要渲染模型几何体的世界空间矩阵信息
     XMFLOAT4X4 World = MathHelper::Identity4x4();
+
+    XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
 
     // Dirty标记，用来表示在此(NumFramesDirty)帧资源中物体相关数据已发生改变，也就是说此时
     // 需要更新此FrameResource中的常量缓冲区数据

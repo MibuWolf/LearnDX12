@@ -263,11 +263,11 @@ struct Material
 
 struct Texture
 {
-	// Unique material name for lookup.
+	// 纹理名称
 	std::string Name;
-
+	// 纹理文件路径
 	std::wstring Filename;
-
+	// 纹理资源和上传堆中的资源
 	Microsoft::WRL::ComPtr<ID3D12Resource> Resource = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12Resource> UploadHeap = nullptr;
 };
@@ -284,3 +284,5 @@ struct Texture
 #ifndef ReleaseCom
 #define ReleaseCom(x) { if(x){ x->Release(); x = 0; } }
 #endif
+
+

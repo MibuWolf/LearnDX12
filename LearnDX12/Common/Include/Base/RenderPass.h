@@ -21,13 +21,13 @@ public:
 
 protected:
 
+	virtual void		BuildTextures();
 	virtual void		BuildRootSignature();
 	virtual void		BuildShadersAndInputLayout();
 	virtual void		BuildShapeGeometry();
 	virtual void		BuildMaterials();
 	virtual void		BuildRenderItems();
 	virtual void		BuildDescriptorHeaps();
-	virtual void		BuildConstantBufferViews();
 	virtual void		BuildPSOs();
 
 	virtual void		TickRenderPass(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
@@ -36,10 +36,14 @@ protected:
 
 	virtual void		DrawRenderItems(const SystemTimer& Timer);
 
+	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+
 protected:
 
 	ComPtr<ID3D12RootSignature> RootSignature = nullptr;
+	ComPtr<ID3D12DescriptorHeap> SrvDescriptorHeap = nullptr;
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> Geometries;
+	std::unordered_map<std::string, std::unique_ptr<Texture>> Textures;
 	std::unordered_map<std::string, std::unique_ptr<Material>> Materials;
 	ComPtr<ID3D12DescriptorHeap> CBVHeap = nullptr;
 	ComPtr<ID3D12DescriptorHeap> SRVDescriptorHeap = nullptr;

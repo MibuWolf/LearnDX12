@@ -23,14 +23,14 @@ struct Material
     float Shininess;
 };
 
-// 根据距离计算灯光强度水煎
 float CalcAttenuation(float d, float falloffStart, float falloffEnd)
 {
     // Linear falloff.
     return saturate((falloffEnd-d) / (falloffEnd - falloffStart));
 }
 
-// 根据菲涅尔计算反射率
+// Schlick gives an approximation to Fresnel reflectance (see pg. 233 "Real-Time Rendering 3rd Ed.").
+// R0 = ( (n-1)/(n+1) )^2, where n is the index of refraction.
 float3 SchlickFresnel(float3 R0, float3 normal, float3 lightVec)
 {
     float cosIncidentAngle = saturate(dot(normal, lightVec));
@@ -46,7 +46,6 @@ float3 BlinnPhong(float3 lightStrength, float3 lightVec, float3 normal, float3 t
     const float m = mat.Shininess * 256.0f;
     float3 halfVec = normalize(toEye + lightVec);
 
-    // 使用微表面法线分布函数计算粗糙度对镜面反射率的影响
     float roughnessFactor = (m + 8.0f)*pow(max(dot(halfVec, normal), 0.0f), m) / 8.0f;
     float3 fresnelFactor = SchlickFresnel(mat.FresnelR0, halfVec, lightVec);
 
