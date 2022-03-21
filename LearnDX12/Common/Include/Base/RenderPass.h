@@ -2,6 +2,18 @@
 #include "Geometry.h"
 #include "FrameResource.h"
 #include "SystemTimer.h"
+#include "Waves.h"
+
+
+
+enum class RenderLayer : int
+{
+	Opaque = 0,
+	Transparent,
+	AlphaTested,
+	Count
+};
+
 
 class RenderPass
 {
@@ -25,6 +37,8 @@ protected:
 	virtual void		BuildRootSignature();
 	virtual void		BuildShadersAndInputLayout();
 	virtual void		BuildShapeGeometry();
+	virtual void		BuildWavesGeometry();
+	virtual void		BuildBoxGeometry();
 	virtual void		BuildMaterials();
 	virtual void		BuildRenderItems();
 	virtual void		BuildDescriptorHeaps();
@@ -34,9 +48,12 @@ protected:
 	virtual void		TickRenderItems(const SystemTimer& Timer);
 	virtual void		TickMaterials(const SystemTimer& Timer);
 
-	virtual void		DrawRenderItems(const SystemTimer& Timer);
+	virtual void		DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+
+	float GetHillsHeight(float x, float z)const;
+	XMFLOAT3 GetHillsNormal(float x, float z)const;
 
 protected:
 
@@ -50,12 +67,16 @@ protected:
 	std::unordered_map<std::string, ComPtr<ID3DBlob>> Shaders;
 	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> PSOs;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayout;
+	std::unique_ptr<Waves> mWaves;
 
 	PassConstants MainPassCB;
 	bool IsWireframe = false;
 
 	std::vector<std::unique_ptr<RenderItem>> AllRItems;
 	std::vector<RenderItem*> OpaqueRitems;
+	RenderItem* WavesRitem = nullptr;
+	// Render items divided by PSO.
+	std::vector<RenderItem*> RItemLayer[(int)RenderLayer::Count];
 
 	UINT PassCbvOffset = 0;
 };

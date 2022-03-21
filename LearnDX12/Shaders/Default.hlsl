@@ -20,18 +20,24 @@
 // Include structures and functions for lighting.
 #include "LightingUtil.hlsl"
 
-Texture2D    gDiffuseMap : register(t0);    // 漫反射贴图 放置在0号t寄存器中
-SamplerState gsamLinear  : register(s0);    // 采样器
+Texture2D    gDiffuseMap : register(t0);
 
+
+SamplerState gsamPointWrap        : register(s0);
+SamplerState gsamPointClamp       : register(s1);
+SamplerState gsamLinearWrap       : register(s2);
+SamplerState gsamLinearClamp      : register(s3);
+SamplerState gsamAnisotropicWrap  : register(s4);
+SamplerState gsamAnisotropicClamp : register(s5);
 
 // Constant data that varies per frame.
 cbuffer cbPerObject : register(b0)
 {
     float4x4 gWorld;
-    float4x4 gTexTransform; // 用于对当前纹理坐标进行扰动从而达成某些特殊效果
+	float4x4 gTexTransform;
 };
 
-// Constant data that varies per material.
+// Constant data that varies per pass.
 cbuffer cbPass : register(b1)
 {
     float4x4 gView;
@@ -50,6 +56,13 @@ cbuffer cbPass : register(b1)
     float gDeltaTime;
     float4 gAmbientLight;
 
+	// Allow application to change fog parameters once per frame.
+	// For example, we may only use fog for certain times of day.
+	float4 gFogColor;
+	float gFogStart;
+	float gFogRange;
+	float2 cbPerObjectPad2;
+
     // Indices [0, NUM_DIR_LIGHTS) are directional lights;
     // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
     // indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
@@ -59,10 +72,10 @@ cbuffer cbPass : register(b1)
 
 cbuffer cbMaterial : register(b2)
 {
-	float4 gDiffuseAlbedo;
-    float3 gFresnelR0;
-    float  gRoughness;
-    float4x4 gMatTransform;
+	float4   gDiffuseAlbedo;
+    float3   gFresnelR0;
+    float    gRoughness;
+	float4x4 gMatTransform;
 };
 
 struct VertexIn
@@ -94,23 +107,31 @@ VertexOut VS(VertexIn vin)
     // Transform to homogeneous clip space.
     vout.PosH = mul(posW, gViewProj);
 	
-	// 对纹理坐标扰动
-    float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
-    vout.TexC = mul(texC, gMatTransform).xy;
+	// Output vertex attributes for interpolation across triangle.
+	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
+	vout.TexC = mul(texC, gMatTransform).xy;
 
     return vout;
 }
 
 float4 PS(VertexOut pin) : SV_Target
 {
-    // 对漫反射纹理采样去除漫反射的反射率
-    float4 diffuseAlbedo = gDiffuseMap.Sample(gsamLinear, pin.TexC) * gDiffuseAlbedo;
+    float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
+	
+#ifdef ALPHA_TEST
+	// Discard pixel if texture alpha < 0.1.  We do this test as soon 
+	// as possible in the shader so that we can potentially exit the
+	// shader early, thereby skipping the rest of the shader code.
+	clip(diffuseAlbedo.a - 0.1f);
+#endif
 
-    // 光栅化后的法向量可能不再是归一化的，将其归于话
+    // Interpolating normal can unnormalize it, so renormalize it.
     pin.NormalW = normalize(pin.NormalW);
 
     // Vector from point being lit to eye. 
-    float3 toEyeW = normalize(gEyePosW - pin.PosW);
+	float3 toEyeW = gEyePosW - pin.PosW;
+	float distToEye = length(toEyeW);
+	toEyeW /= distToEye; // normalize
 
     // Light terms.
     float4 ambient = gAmbientLight*diffuseAlbedo;
@@ -123,7 +144,12 @@ float4 PS(VertexOut pin) : SV_Target
 
     float4 litColor = ambient + directLight;
 
-    // Common convention to take alpha from diffuse material.
+#ifdef FOG
+	float fogAmount = saturate((distToEye - gFogStart) / gFogRange);
+	litColor = lerp(litColor, gFogColor, fogAmount);
+#endif
+
+    // Common convention to take alpha from diffuse albedo.
     litColor.a = diffuseAlbedo.a;
 
     return litColor;

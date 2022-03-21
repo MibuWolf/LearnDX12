@@ -87,7 +87,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	XMStoreFloat4x4(&Proj, P);
 
 	MSG msg;
-
+	systemTimer.Reset();
 	// 主消息循环:
 	while (GetMessage(&msg, nullptr, 0, 0))
 	{
