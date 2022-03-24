@@ -130,7 +130,13 @@ void DXRenderDeviceManager::Clear(SystemTimer& Timer, ID3D12PipelineState* pPipe
 
 	// 清理后台缓冲区及深度缓冲区
 	CommandList->ClearRenderTargetView(GetCurrentBackBufferDescriptor(), DirectX::Colors::LightSteelBlue, 0, nullptr);
-	CommandList->ClearDepthStencilView(GetDepthStencilDescriptor(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+	CommandList->ClearDepthStencilView(GetDepthStencilDescriptor(),		// 深度和模板缓冲区描述符
+		D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,			// 清理Flag标识要清理的是深度缓冲区还是模板缓冲区亦或者两者都清理
+		1.0f,		// 将深度缓冲区清理为此值 该值范围为[0.0，1.0]
+		0,			// 将模板缓冲区清理为此值 该值范围为[0,255]
+		0,			// 清理后台缓冲区中的rect个数(可以仅对后台缓冲区某几个矩形区域做清理)
+		nullptr);		// 区域rect数组
 
 	// 指定我们要渲染到的后台缓冲区和深度缓冲区
 	D3D12_CPU_DESCRIPTOR_HANDLE curBackBufferDescriptor = GetCurrentBackBufferDescriptor();
@@ -463,7 +469,7 @@ void DXRenderDeviceManager::CreateBufferDescriptor()
 
 	// 对于深度/模板缓冲区而言，则需要手动创建深度缓冲区资源，然后再为其创建描述符
 	D3D12_RESOURCE_DESC depthStencilDesc;			// 创建资源时对资源的描述信息
-	depthStencilDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;	// 资源类型/资源维度，是Buffer/1DTexture/2DTexture/3DTextire 此处深度模板缓存使用2DTexture杰克
+	depthStencilDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;	// 资源类型/资源维度，是Buffer/1DTexture/2DTexture/3DTextire 此处深度模板缓存使用2DTexture
 	depthStencilDesc.Alignment = 0;
 	depthStencilDesc.Width = BackBufferWidth;	// 资源宽高
 	depthStencilDesc.Height = BackBufferHeight;
@@ -501,12 +507,12 @@ void DXRenderDeviceManager::CreateBufferDescriptor()
 	CommandList->ResourceBarrier(1, &depthStencilResBarrier);
 }
 
-void DXRenderDeviceManager::CreateFrameResources(UINT ObjectCount, UINT MatCount)
+void DXRenderDeviceManager::CreateFrameResources(UINT passCount, UINT ObjectCount, UINT MatCount)
 {
 	for (int i = 0; i < gNumFrameResources; ++i)
 	{
 		FrameResources.push_back(std::make_unique<FrameResource>(D3DDevice.Get(),
-			1, ObjectCount, MatCount));
+			passCount, ObjectCount, MatCount));
 	}
 }
 
@@ -518,6 +524,7 @@ void DXRenderDeviceManager::CreateFrameResources(UINT passCount, UINT ObjectCoun
 			passCount, ObjectCount, MatCount, waveVertexCount));
 	}
 }
+
 
 FrameResource* DXRenderDeviceManager::GetFrameResource(UINT Index)
 {

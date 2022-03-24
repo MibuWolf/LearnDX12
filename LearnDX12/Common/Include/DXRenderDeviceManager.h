@@ -41,7 +41,7 @@ public:
 	virtual	bool	InitD3DDevice(HWND	hwnd);
 
 	// 创建帧资源数组
-	void		CreateFrameResources(UINT ObjectCount, UINT MatCount);
+	void		CreateFrameResources(UINT passCount, UINT ObjectCount, UINT MatCount);
 
 	// 创建帧资源数组
 	void		CreateFrameResources(UINT passCount, UINT ObjectCount, UINT MatCount, UINT waveVertexCount);

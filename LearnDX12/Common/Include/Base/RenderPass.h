@@ -9,8 +9,10 @@
 enum class RenderLayer : int
 {
 	Opaque = 0,
+	Mirrors,
+	Reflected,
 	Transparent,
-	AlphaTested,
+	Shadow,
 	Count
 };
 
@@ -36,9 +38,8 @@ protected:
 	virtual void		BuildTextures();
 	virtual void		BuildRootSignature();
 	virtual void		BuildShadersAndInputLayout();
-	virtual void		BuildShapeGeometry();
-	virtual void		BuildWavesGeometry();
-	virtual void		BuildBoxGeometry();
+	virtual void		BuildRoomGeometry();
+	virtual void		BuildSkullGeometry();
 	virtual void		BuildMaterials();
 	virtual void		BuildRenderItems();
 	virtual void		BuildDescriptorHeaps();
@@ -70,11 +71,14 @@ protected:
 	std::unique_ptr<Waves> mWaves;
 
 	PassConstants MainPassCB;
+	PassConstants ReflectedPassCB;
 	bool IsWireframe = false;
 
 	std::vector<std::unique_ptr<RenderItem>> AllRItems;
 	std::vector<RenderItem*> OpaqueRitems;
-	RenderItem* WavesRitem = nullptr;
+	RenderItem* SkullRitem = nullptr;
+	RenderItem* ReflectedSkullRitem = nullptr;
+	RenderItem* ShadowedSkullRitem = nullptr;
 	// Render items divided by PSO.
 	std::vector<RenderItem*> RItemLayer[(int)RenderLayer::Count];
 
