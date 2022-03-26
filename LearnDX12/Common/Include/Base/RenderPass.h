@@ -9,10 +9,9 @@
 enum class RenderLayer : int
 {
 	Opaque = 0,
-	Mirrors,
-	Reflected,
 	Transparent,
-	Shadow,
+	AlphaTested,
+	AlphaTestedTreeSprites,
 	Count
 };
 
@@ -38,8 +37,10 @@ protected:
 	virtual void		BuildTextures();
 	virtual void		BuildRootSignature();
 	virtual void		BuildShadersAndInputLayout();
-	virtual void		BuildRoomGeometry();
-	virtual void		BuildSkullGeometry();
+	virtual void		BuildLandGeometry();
+	virtual void		BuildWavesGeometry();
+	virtual void		BuildBoxGeometry();
+	virtual void		BuildTreeSpritesGeometry();
 	virtual void		BuildMaterials();
 	virtual void		BuildRenderItems();
 	virtual void		BuildDescriptorHeaps();
@@ -48,6 +49,7 @@ protected:
 	virtual void		TickRenderPass(const SystemTimer& Timer, const XMFLOAT4X4& View, const XMFLOAT4X4& Proj, const XMFLOAT3& EyePos);
 	virtual void		TickRenderItems(const SystemTimer& Timer);
 	virtual void		TickMaterials(const SystemTimer& Timer);
+	virtual void		TickWaves(const SystemTimer& Timer);
 
 	virtual void		DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
 
@@ -68,6 +70,7 @@ protected:
 	std::unordered_map<std::string, ComPtr<ID3DBlob>> Shaders;
 	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> PSOs;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayout;
+	std::vector<D3D12_INPUT_ELEMENT_DESC> TreeSpriteInputLayout;
 	std::unique_ptr<Waves> mWaves;
 
 	PassConstants MainPassCB;
@@ -76,7 +79,7 @@ protected:
 
 	std::vector<std::unique_ptr<RenderItem>> AllRItems;
 	std::vector<RenderItem*> OpaqueRitems;
-	RenderItem* SkullRitem = nullptr;
+	RenderItem* WavesRItem = nullptr;
 	RenderItem* ReflectedSkullRitem = nullptr;
 	RenderItem* ShadowedSkullRitem = nullptr;
 	// Render items divided by PSO.

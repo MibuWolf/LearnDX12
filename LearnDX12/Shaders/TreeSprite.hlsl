@@ -1,7 +1,5 @@
 //***************************************************************************************
-// Default.hlsl by Frank Luna (C) 2015 All Rights Reserved.
-//
-// Default shader, currently supports lighting.
+// TreeSprite.hlsl by Frank Luna (C) 2015 All Rights Reserved.
 //***************************************************************************************
 
 // Defaults for number of lights.
@@ -20,7 +18,7 @@
 // Include structures and functions for lighting.
 #include "LightingUtil.hlsl"
 
-Texture2D    gDiffuseMap : register(t0);
+Texture2DArray gTreeMapArray : register(t0);
 
 
 SamplerState gsamPointWrap        : register(s0);
@@ -75,46 +73,87 @@ cbuffer cbMaterial : register(b2)
     float    gRoughness;
 	float4x4 gMatTransform;
 };
-
+ 
 struct VertexIn
 {
-	float3 PosL    : POSITION;
-    float3 NormalL : NORMAL;
-	float2 TexC    : TEXCOORD;
+	float3 PosW  : POSITION;
+	float2 SizeW : SIZE;
 };
 
 struct VertexOut
 {
+	float3 CenterW : POSITION;
+	float2 SizeW   : SIZE;
+};
+
+struct GeoOut
+{
 	float4 PosH    : SV_POSITION;
     float3 PosW    : POSITION;
     float3 NormalW : NORMAL;
-	float2 TexC    : TEXCOORD;
+    float2 TexC    : TEXCOORD;
+    uint   PrimID  : SV_PrimitiveID;
 };
 
 VertexOut VS(VertexIn vin)
 {
-	VertexOut vout = (VertexOut)0.0f;
-	
-    // Transform to world space.
-    float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
-    vout.PosW = posW.xyz;
+	VertexOut vout;
 
-    // Assumes nonuniform scaling; otherwise, need to use inverse-transpose of world matrix.
-    vout.NormalW = mul(vin.NormalL, (float3x3)gWorld);
+	// Just pass data over to geometry shader.
+	vout.CenterW = vin.PosW;
+	vout.SizeW   = vin.SizeW;
 
-    // Transform to homogeneous clip space.
-    vout.PosH = mul(posW, gViewProj);
-	
-	// Output vertex attributes for interpolation across triangle.
-	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
-	vout.TexC = mul(texC, gMatTransform).xy;
+	return vout;
+}
+ 
+ // GS代码示例
+[maxvertexcount(4)]		// 表示输出的顶点数最多为4个
+void GS(point VertexOut gin[1],				// 输入图元类型为piont  输入的顶点类型为VertexOut gin[1]只有一个顶点
+        uint primID : SV_PrimitiveID,		// 顶点索引ID(后续讨论)
+        inout TriangleStream<GeoOut> triStream)	// 输出为三角形条带 输出顶点类型为GeoOut
+{	
+	// 根据相机位置计算出相机与公告板的朝向
+	float3 up = float3(0.0f, 1.0f, 0.0f);
+	float3 look = gEyePosW - gin[0].CenterW;
+	look.y = 0.0f; // y-axis aligned, so project to xz-plane
+	look = normalize(look);
+	float3 right = cross(up, look);
 
-    return vout;
+	float halfWidth  = 0.5f*gin[0].SizeW.x;
+	float halfHeight = 0.5f*gin[0].SizeW.y;
+	// 根据大小计算出公告板四个顶点像素
+	float4 v[4];
+	v[0] = float4(gin[0].CenterW + halfWidth*right - halfHeight*up, 1.0f);
+	v[1] = float4(gin[0].CenterW + halfWidth*right + halfHeight*up, 1.0f);
+	v[2] = float4(gin[0].CenterW - halfWidth*right - halfHeight*up, 1.0f);
+	v[3] = float4(gin[0].CenterW - halfWidth*right + halfHeight*up, 1.0f);
+	// 设置每个顶点的UV坐标
+	float2 texC[4] = 
+	{
+		float2(0.0f, 1.0f),
+		float2(0.0f, 0.0f),
+		float2(1.0f, 1.0f),
+		float2(1.0f, 0.0f)
+	};
+	// 设置输出图元每个顶点的信息
+	GeoOut gout;
+	[unroll]
+	for(int i = 0; i < 4; ++i)
+	{
+		gout.PosH     = mul(v[i], gViewProj);
+		gout.PosW     = v[i].xyz;
+		gout.NormalW  = look;
+		gout.TexC     = texC[i];
+		gout.PrimID   = primID;
+		
+		triStream.Append(gout);					// 总共输出四个顶点形成两个三角形的三角形条带
+	}
 }
 
-float4 PS(VertexOut pin, uint primID : SV_PrimitiveID) : SV_Target
+float4 PS(GeoOut pin) : SV_Target
 {
-    float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
+	float3 uvw = float3(pin.TexC, pin.PrimID%3);
+    float4 diffuseAlbedo = gTreeMapArray.Sample(gsamAnisotropicWrap, uvw) * gDiffuseAlbedo;
 	
 #ifdef ALPHA_TEST
 	// Discard pixel if texture alpha < 0.1.  We do this test as soon 
