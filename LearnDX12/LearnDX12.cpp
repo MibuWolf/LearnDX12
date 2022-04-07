@@ -8,6 +8,7 @@
 #include "SystemTimer.h"
 #include "DXRenderDeviceManager.h"
 #include "Base/RenderPass.h"
+#include "Filter/BlurFilter.h"
 //#include "WavesRenderPass.h"
 #include <WindowsX.h>
 #define MAX_LOADSTRING 100
@@ -29,8 +30,10 @@ XMFLOAT4X4	View = MathHelper::Identity4x4();
 XMFLOAT4X4	Proj = MathHelper::Identity4x4();
 
 std::unique_ptr<RenderPass> pRenderPass = nullptr;
+std::unique_ptr<BlurFilter> mBlurFilter = nullptr;
 //std::unique_ptr<WavesRenderPass> pWavesRenderPass = nullptr;
 
+void		BuildPostProcessRootSignature();
 void		UpdateCamera(SystemTimer& Timer);
 
 void		Tick(SystemTimer& Timer);
@@ -72,10 +75,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	{
 		return FALSE;
 	}
+	mBlurFilter = std::make_unique<BlurFilter>(DXRenderDeviceManager::GetInstance().GetD3DDevice(),
+		1920.0f, 1080.0f, DXGI_FORMAT_R8G8B8A8_UNORM);
 	DXRenderDeviceManager::GetInstance().ResetCommandList();
+
 	pRenderPass = std::make_unique<RenderPass>();
 	pRenderPass->Initialize();
-
+	mBlurFilter->Initialize();
 	//pWavesRenderPass = std::make_unique<WavesRenderPass>();
 	//pWavesRenderPass->Initialize();
 
@@ -83,7 +89,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 	HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_LEARNDX12));
 
-	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * MathHelper::Pi, 1280.0f / 768.0f, 1.0f, 1000.0f);
+	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * MathHelper::Pi, 1920.0f / 1080.0f, 1.0f, 1000.0f);
 	XMStoreFloat4x4(&Proj, P);
 
 	MSG msg;
@@ -107,7 +113,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 	return (int)msg.wParam;
 }
-
 
 
 
@@ -151,8 +156,15 @@ void		Draw(SystemTimer& Timer)
 
 	//if (pWavesRenderPass)
 	//	pWavesRenderPass->Draw(systemTimer);
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
 
-	DXRenderDeviceManager::GetInstance().Present(systemTimer);
+	if (mBlurFilter && pCommandList)
+	{
+		mBlurFilter->Execute(pCommandList, DXRenderDeviceManager::GetInstance().GetCurrentBackgroundBuffer(), 4);
+	}
+
+
+	DXRenderDeviceManager::GetInstance().Present(systemTimer, false);
 }
 
 
@@ -256,6 +268,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	{
 		systemTimer.Start();
 		DXRenderDeviceManager::GetInstance().OnResize();
+		if (mBlurFilter != nullptr)
+		{
+			mBlurFilter->OnResize(1920.0f, 1080.0f);
+		}
 	}break;
 	case WM_DESTROY:
 		PostQuitMessage(0);

@@ -56,7 +56,7 @@ public:
 	virtual void Clear(SystemTimer& Timer, ID3D12PipelineState* pPipelineState = nullptr);
 
 	// 推送后台缓冲区到前台显示
-	virtual void Present(SystemTimer& Timer);
+	virtual void Present(SystemTimer& Timer, bool DefaultPresent = true);
 
 	// 重置命令列表
 	virtual void ResetCommandList(ID3D12PipelineState* pPipelineState = nullptr);
@@ -114,6 +114,8 @@ public:
 		return CommandList.Get();
 	}
 
+	// 获取当前后台缓冲区资源
+	ID3D12Resource* GetCurrentBackgroundBuffer();
 
 protected:
 
@@ -190,8 +192,8 @@ private:
 	UINT					DSVDescriptorSize = 0;
 
 	// 后台缓冲区宽高
-	int BackBufferWidth = 1280;
-	int BackBufferHeight = 768;
+	int BackBufferWidth = 1920;
+	int BackBufferHeight = 1080;
 
 	// 帧资源数组
 	std::vector<std::unique_ptr<FrameResource>> FrameResources;

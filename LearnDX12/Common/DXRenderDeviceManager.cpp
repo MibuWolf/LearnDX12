@@ -144,13 +144,17 @@ void DXRenderDeviceManager::Clear(SystemTimer& Timer, ID3D12PipelineState* pPipe
 	CommandList->OMSetRenderTargets(1, &curBackBufferDescriptor, true, &depthStencilDesc);
 }
 
-void DXRenderDeviceManager::Present(SystemTimer& Timer)
+void DXRenderDeviceManager::Present(SystemTimer& Timer, bool DefaultPresent)
 {
 	// 在设置完所有渲染指令后，将后台缓冲区的资源状态改为呈现(准备提交后台缓冲区到前台显示)
-	CD3DX12_RESOURCE_BARRIER currentBackBufferResBarrier = CD3DX12_RESOURCE_BARRIER::Transition(BackgroundBuffer[CurrBackBuffer].Get(),
-		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+	if (DefaultPresent)
+	{
+		CD3DX12_RESOURCE_BARRIER currentBackBufferResBarrier = CD3DX12_RESOURCE_BARRIER::Transition(BackgroundBuffer[CurrBackBuffer].Get(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 
-	CommandList->ResourceBarrier(1, &currentBackBufferResBarrier);
+		CommandList->ResourceBarrier(1, &currentBackBufferResBarrier);
+	}
+
 
 	// 关闭命令列表(完成本帧内的命令写入)
 	ThrowIfFailed(CommandList->Close());
@@ -298,6 +302,11 @@ FrameResource* DXRenderDeviceManager::GetCurrentFrameResource()
 UINT DXRenderDeviceManager::GetCurrentFrameResourceIndex()
 {
 	return CurrentFrameResourceIndex;
+}
+
+ID3D12Resource* DXRenderDeviceManager::GetCurrentBackgroundBuffer()
+{
+	return BackgroundBuffer[CurrBackBuffer].Get();
 }
 
 // 初始化D3DDevice
