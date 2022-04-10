@@ -75,13 +75,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	{
 		return FALSE;
 	}
-	mBlurFilter = std::make_unique<BlurFilter>(DXRenderDeviceManager::GetInstance().GetD3DDevice(),
-		1920.0f, 1080.0f, DXGI_FORMAT_R8G8B8A8_UNORM);
+	//mBlurFilter = std::make_unique<BlurFilter>(DXRenderDeviceManager::GetInstance().GetD3DDevice(),
+	//	1920.0f, 1080.0f, DXGI_FORMAT_R8G8B8A8_UNORM);
 	DXRenderDeviceManager::GetInstance().ResetCommandList();
 
 	pRenderPass = std::make_unique<RenderPass>();
 	pRenderPass->Initialize();
-	mBlurFilter->Initialize();
+	//mBlurFilter->Initialize();
 	//pWavesRenderPass = std::make_unique<WavesRenderPass>();
 	//pWavesRenderPass->Initialize();
 
@@ -156,15 +156,15 @@ void		Draw(SystemTimer& Timer)
 
 	//if (pWavesRenderPass)
 	//	pWavesRenderPass->Draw(systemTimer);
-	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+	//ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
 
-	if (mBlurFilter && pCommandList)
-	{
-		mBlurFilter->Execute(pCommandList, DXRenderDeviceManager::GetInstance().GetCurrentBackgroundBuffer(), 4);
-	}
+	//if (mBlurFilter && pCommandList)
+	//{
+	//	mBlurFilter->Execute(pCommandList, DXRenderDeviceManager::GetInstance().GetCurrentBackgroundBuffer(), 4);
+	//}
 
 
-	DXRenderDeviceManager::GetInstance().Present(systemTimer, false);
+	DXRenderDeviceManager::GetInstance().Present(systemTimer);
 }
 
 
@@ -270,7 +270,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		DXRenderDeviceManager::GetInstance().OnResize();
 		if (mBlurFilter != nullptr)
 		{
-			mBlurFilter->OnResize(1920.0f, 1080.0f);
+			//mBlurFilter->OnResize(1920.0f, 1080.0f);
 		}
 	}break;
 	case WM_DESTROY:
