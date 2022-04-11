@@ -1,7 +1,7 @@
 ﻿#include "Base/RenderPass.h"
 #include "DXRenderDeviceManager.h"
 #include "Base/GeometryGenerator.h"
-
+#include "Base/DDSTextureLoader.h"
 
 RenderPass::RenderPass()
 {
@@ -17,6 +17,7 @@ RenderPass::~RenderPass()
 
 void RenderPass::Initialize()
 {
+	LoadTextures();
 	// 创建根签名
 	BuildRootSignature();
 	// 编译着色器并设置着色器输入顶点参数布局
@@ -32,7 +33,7 @@ void RenderPass::Initialize()
 	// 为三个FrameRender(每个FrameRender分别有对象常量缓冲区和RenderPass常量缓冲区两个缓冲区)的常量缓冲区创建描述符堆
 	BuildDescriptorHeaps();
 	// 为三个FrameRender中的每个缓冲区创建描述符并存储在描述符堆中
-	BuildConstantBufferViews();
+	//BuildConstantBufferViews();
 	// 创建针对RenderPass的渲染管线状态对象
 	BuildPSOs();
 }
@@ -56,27 +57,67 @@ void RenderPass::Draw(const SystemTimer& Timer)
 	UINT FrameResourceIndex = DXRenderDeviceManager::GetInstance().GetCurrentFrameResourceIndex();
 	UINT ConstantDDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
 
-	if (IsWireframe)
-	{
-		pCommandList->SetPipelineState(PSOs["opaque_wireframe"].Get());
-	}
-	else
-	{
-		pCommandList->SetPipelineState(PSOs["opaque"].Get());
-	}
-
-	ID3D12DescriptorHeap* descriptorHeaps[] = { CBVHeap.Get() };
+	pCommandList->SetPipelineState(PSOs["opaque"].Get());
+	ID3D12DescriptorHeap* descriptorHeaps[] = { SrvDescriptorHeap.Get() };
 	pCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
 	pCommandList->SetGraphicsRootSignature(RootSignature.Get());
-	int passCbvIndex = PassCbvOffset + FrameResourceIndex;
-	auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(CBVHeap->GetGPUDescriptorHandleForHeapStart());
-	passCbvHandle.Offset(passCbvIndex, ConstantDDescriptorSize);
-	pCommandList->SetGraphicsRootDescriptorTable(2, passCbvHandle);
+
+	// 绑定渲染Pass参数
+	auto passCB = CurrentFrameResource->PassCB->Resource();
+	pCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+
+	// 绑定材质数组
+	auto matBuffer = CurrentFrameResource->MaterialCB->Resource();
+	pCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
+
+	// 绑定纹理数组
+	pCommandList->SetGraphicsRootDescriptorTable(3, SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
 	DrawRenderItems(Timer);
 }
 
 
+
+void RenderPass::LoadTextures()
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+	if (pD3DDevice == nullptr || pCommandList == nullptr)
+		return;
+	auto bricksTex = std::make_unique<Texture>();
+	bricksTex->Name = "bricksTex";
+	bricksTex->Filename = L"Textures/bricks.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
+		pCommandList, bricksTex->Filename.c_str(),
+		bricksTex->Resource, bricksTex->UploadHeap));
+
+	auto stoneTex = std::make_unique<Texture>();
+	stoneTex->Name = "stoneTex";
+	stoneTex->Filename = L"Textures/stone.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
+		pCommandList, stoneTex->Filename.c_str(),
+		stoneTex->Resource, stoneTex->UploadHeap));
+
+	auto tileTex = std::make_unique<Texture>();
+	tileTex->Name = "tileTex";
+	tileTex->Filename = L"Textures/tile.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
+		pCommandList, tileTex->Filename.c_str(),
+		tileTex->Resource, tileTex->UploadHeap));
+
+	auto crateTex = std::make_unique<Texture>();
+	crateTex->Name = "crateTex";
+	crateTex->Filename = L"Textures/WoodCrate01.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
+		pCommandList, crateTex->Filename.c_str(),
+		crateTex->Resource, crateTex->UploadHeap));
+
+	Textures[bricksTex->Name] = std::move(bricksTex);
+	Textures[stoneTex->Name] = std::move(stoneTex);
+	Textures[tileTex->Name] = std::move(tileTex);
+	Textures[crateTex->Name] = std::move(crateTex);
+}
 
 void RenderPass::BuildRootSignature()
 {
@@ -86,28 +127,27 @@ void RenderPass::BuildRootSignature()
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
 
-	// 描述符表
-	CD3DX12_DESCRIPTOR_RANGE cbvTable0;
-	cbvTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
+	CD3DX12_DESCRIPTOR_RANGE texTable;
+	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0);
 
-	CD3DX12_DESCRIPTOR_RANGE cbvTable1;
-	cbvTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 1);
+	// Root parameter can be a table, root descriptor or root constants.
+	CD3DX12_ROOT_PARAMETER slotRootParameter[4];
 
-	CD3DX12_DESCRIPTOR_RANGE cbvTable2;
-	cbvTable2.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 2);
+	// 跟进更新频率高低定义根参数
+	slotRootParameter[0].InitAsConstantBufferView(0);	// 每个渲染对象的常量缓冲区
+	slotRootParameter[1].InitAsConstantBufferView(1);	// 每个渲染Pass的常量缓冲区
+	slotRootParameter[2].InitAsShaderResourceView(0, 1);	// 存储材质数组的结构化缓冲区数组被定义为SRV类型并指定放置在space1
+	slotRootParameter[3].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);	// 定义位置数组  根参数类型为根描述符表
 
-	// 3个根参数(增加材质参数)
-	CD3DX12_ROOT_PARAMETER slotRootParameter[3];
 
-	//两个根参数都为描述符表
-	slotRootParameter[0].InitAsDescriptorTable(1, &cbvTable0);
-	slotRootParameter[1].InitAsDescriptorTable(1, &cbvTable1);
-	slotRootParameter[2].InitAsDescriptorTable(1, &cbvTable2);
+	auto staticSamplers = GetStaticSamplers();
 
-	//  根签名描述信息序列化并创建根描述符
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(3, slotRootParameter, 0, nullptr,
+	// A root signature is an array of root parameters.
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
+		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
+	// create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
 	ComPtr<ID3DBlob> serializedRootSig = nullptr;
 	ComPtr<ID3DBlob> errorBlob = nullptr;
 	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
@@ -279,7 +319,7 @@ void RenderPass::BuildMaterials()
 	bricks0->Name = "bricks0";
 	bricks0->MatCBIndex = 0;
 	bricks0->DiffuseSrvHeapIndex = 0;
-	bricks0->DiffuseAlbedo = XMFLOAT4(Colors::ForestGreen);
+	bricks0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 	bricks0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
 	bricks0->Roughness = 0.1f;
 
@@ -287,7 +327,7 @@ void RenderPass::BuildMaterials()
 	stone0->Name = "stone0";
 	stone0->MatCBIndex = 1;
 	stone0->DiffuseSrvHeapIndex = 1;
-	stone0->DiffuseAlbedo = XMFLOAT4(Colors::LightSteelBlue);
+	stone0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 	stone0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
 	stone0->Roughness = 0.3f;
 
@@ -295,33 +335,34 @@ void RenderPass::BuildMaterials()
 	tile0->Name = "tile0";
 	tile0->MatCBIndex = 2;
 	tile0->DiffuseSrvHeapIndex = 2;
-	tile0->DiffuseAlbedo = XMFLOAT4(Colors::LightGray);
+	tile0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 	tile0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-	tile0->Roughness = 0.2f;
+	tile0->Roughness = 0.3f;
 
-	auto skullMat = std::make_unique<Material>();
-	skullMat->Name = "skullMat";
-	skullMat->MatCBIndex = 3;
-	skullMat->DiffuseSrvHeapIndex = 3;
-	skullMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	skullMat->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05);
-	skullMat->Roughness = 0.3f;
+	auto crate0 = std::make_unique<Material>();
+	crate0->Name = "crate0";
+	crate0->MatCBIndex = 3;
+	crate0->DiffuseSrvHeapIndex = 3;
+	crate0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	crate0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
+	crate0->Roughness = 0.2f;
 
 	Materials["bricks0"] = std::move(bricks0);
 	Materials["stone0"] = std::move(stone0);
 	Materials["tile0"] = std::move(tile0);
-	Materials["skullMat"] = std::move(skullMat);
+	Materials["crate0"] = std::move(crate0);
 }
 
 
 void RenderPass::BuildRenderItems()
 {
 	auto boxRitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f));
+	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f));
+	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
 	boxRitem->ObjCBIndex = 0;
+	boxRitem->Mat = Materials["crate0"].get();
 	boxRitem->Geo = Geometries["shapeGeo"].get();
-	boxRitem->Mat = Materials["stone0"].get();
-	boxRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	boxRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
@@ -329,15 +370,17 @@ void RenderPass::BuildRenderItems()
 
 	auto gridRitem = std::make_unique<RenderItem>();
 	gridRitem->World = MathHelper::Identity4x4();
+	XMStoreFloat4x4(&gridRitem->TexTransform, XMMatrixScaling(8.0f, 8.0f, 1.0f));
 	gridRitem->ObjCBIndex = 1;
-	gridRitem->Geo = Geometries["shapeGeo"].get();
 	gridRitem->Mat = Materials["tile0"].get();
-	gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	gridRitem->Geo = Geometries["shapeGeo"].get();
+	gridRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
 	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
 	gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
 	AllRItems.push_back(std::move(gridRitem));
 
+	XMMATRIX brickTexTransform = XMMatrixScaling(1.0f, 1.0f, 1.0f);
 	UINT objCBIndex = 2;
 	for (int i = 0; i < 5; ++i)
 	{
@@ -353,37 +396,41 @@ void RenderPass::BuildRenderItems()
 		XMMATRIX rightSphereWorld = XMMatrixTranslation(+5.0f, 3.5f, -10.0f + i * 5.0f);
 
 		XMStoreFloat4x4(&leftCylRitem->World, rightCylWorld);
+		XMStoreFloat4x4(&leftCylRitem->TexTransform, brickTexTransform);
 		leftCylRitem->ObjCBIndex = objCBIndex++;
+		leftCylRitem->Mat = Materials["bricks0"].get();
 		leftCylRitem->Geo = Geometries["shapeGeo"].get();
-		leftCylRitem->Mat = Materials["skullMat"].get();
-		leftCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		leftCylRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
 		leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
 		leftCylRitem->BaseVertexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
 
 		XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
+		XMStoreFloat4x4(&rightCylRitem->TexTransform, brickTexTransform);
 		rightCylRitem->ObjCBIndex = objCBIndex++;
+		rightCylRitem->Mat = Materials["bricks0"].get();
 		rightCylRitem->Geo = Geometries["shapeGeo"].get();
-		rightCylRitem->Mat = Materials["skullMat"].get();
-		rightCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		rightCylRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
 		rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
 		rightCylRitem->BaseVertexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
 
 		XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
+		leftSphereRitem->TexTransform = MathHelper::Identity4x4();
 		leftSphereRitem->ObjCBIndex = objCBIndex++;
+		leftSphereRitem->Mat = Materials["stone0"].get();
 		leftSphereRitem->Geo = Geometries["shapeGeo"].get();
-		leftSphereRitem->Mat = Materials["bricks0"].get();
-		leftSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		leftSphereRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
 		leftSphereRitem->BaseVertexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 
 		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
+		rightSphereRitem->TexTransform = MathHelper::Identity4x4();
 		rightSphereRitem->ObjCBIndex = objCBIndex++;
+		rightSphereRitem->Mat = Materials["stone0"].get();
 		rightSphereRitem->Geo = Geometries["shapeGeo"].get();
-		rightSphereRitem->Mat = Materials["bricks0"].get();
-		rightSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		rightSphereRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
 		rightSphereRitem->BaseVertexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
@@ -407,25 +454,55 @@ void RenderPass::BuildDescriptorHeaps()
 	if (pD3DDevice == nullptr)
 		return;
 
-	UINT objCount = (UINT)OpaqueRitems.size();
-	UINT matCount = (UINT)Materials.size();
+	UINT CbvSrvDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
+	//
+	// Create the SRV heap.
+	//
+	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+	srvHeapDesc.NumDescriptors = 4;
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	ThrowIfFailed(pD3DDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&SrvDescriptorHeap)));
 
-	// 为每个几何对象创建一个针对该对象的常量缓冲区，为所有几何对象
-	// 所在的renderpass创建一个renderpass的常量缓冲区，因为总共
-	// 有gNumFrameResources个FrameResource，需要为每个FrameResource都要
-	// 创建相应的常量缓冲区
-	UINT numDescriptors = (objCount + matCount + 1) * gNumFrameResources;
+	//
+	// Fill out the heap with actual descriptors.
+	//
+	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
-	// Save an offset to the start of the pass CBVs.  These are the last 3 descriptors.
-	PassCbvOffset = (objCount + matCount)* gNumFrameResources;
+	auto bricksTex = Textures["bricksTex"]->Resource;
+	auto stoneTex = Textures["stoneTex"]->Resource;
+	auto tileTex = Textures["tileTex"]->Resource;
+	auto crateTex = Textures["crateTex"]->Resource;
 
-	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc;
-	cbvHeapDesc.NumDescriptors = numDescriptors;			// 创建numDescriptors个常量缓冲区描述符
-	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-	cbvHeapDesc.NodeMask = 0;
-	ThrowIfFailed(pD3DDevice->CreateDescriptorHeap(&cbvHeapDesc,
-		IID_PPV_ARGS(&CBVHeap)));
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Format = bricksTex->GetDesc().Format;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = bricksTex->GetDesc().MipLevels;
+	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+	pD3DDevice->CreateShaderResourceView(bricksTex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	hDescriptor.Offset(1, CbvSrvDescriptorSize);
+
+	srvDesc.Format = stoneTex->GetDesc().Format;
+	srvDesc.Texture2D.MipLevels = stoneTex->GetDesc().MipLevels;
+	pD3DDevice->CreateShaderResourceView(stoneTex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	hDescriptor.Offset(1, CbvSrvDescriptorSize);
+
+	srvDesc.Format = tileTex->GetDesc().Format;
+	srvDesc.Texture2D.MipLevels = tileTex->GetDesc().MipLevels;
+	pD3DDevice->CreateShaderResourceView(tileTex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	hDescriptor.Offset(1, CbvSrvDescriptorSize);
+
+	srvDesc.Format = crateTex->GetDesc().Format;
+	srvDesc.Texture2D.MipLevels = crateTex->GetDesc().MipLevels;
+	pD3DDevice->CreateShaderResourceView(crateTex.Get(), &srvDesc, hDescriptor);
 }
 
 
@@ -526,6 +603,7 @@ void RenderPass::BuildPSOs()
 	//
 	// PSO for opaque objects.
 	//
+
 	ZeroMemory(&opaquePsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
 	opaquePsoDesc.InputLayout = { InputLayout.data(), (UINT)InputLayout.size() };
 	opaquePsoDesc.pRootSignature = RootSignature.Get();
@@ -554,13 +632,6 @@ void RenderPass::BuildPSOs()
 	ThrowIfFailed(pD3DDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&PSOs["opaque"])));
 
 
-	//
-	// PSO for opaque wireframe objects.
-	//
-
-	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueWireframePsoDesc = opaquePsoDesc;
-	opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-	ThrowIfFailed(pD3DDevice->CreateGraphicsPipelineState(&opaqueWireframePsoDesc, IID_PPV_ARGS(&PSOs["opaque_wireframe"])));
 }
 
 
@@ -624,9 +695,12 @@ void RenderPass::TickRenderItems(const SystemTimer& Timer)
 		if (Item->NumFramesDirty > 0)
 		{
 			XMMATRIX world = XMLoadFloat4x4(&Item->World);
+			XMMATRIX texTransform = XMLoadFloat4x4(&Item->TexTransform);
 
 			ObjectConstants objConstants;
 			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
+			XMStoreFloat4x4(&objConstants.TexTransform, XMMatrixTranspose(texTransform));
+			objConstants.MaterialIndex = Item->Mat->MatCBIndex;
 
 			currObjectCB->CopyData(Item->ObjCBIndex, objConstants);
 
@@ -653,13 +727,14 @@ void RenderPass::TickMaterials(const SystemTimer& Timer)
 		{
 			XMMATRIX matTransform = XMLoadFloat4x4(&mat->MatTransform);
 
-			MaterialConstants matConstants;
-			matConstants.DiffuseAlbedo = mat->DiffuseAlbedo;
-			matConstants.FresnelR0 = mat->FresnelR0;
-			matConstants.Roughness = mat->Roughness;
-			XMStoreFloat4x4(&matConstants.MatTransform, XMMatrixTranspose(matTransform));
+			MaterialConstants matData;
+			matData.DiffuseAlbedo = mat->DiffuseAlbedo;
+			matData.FresnelR0 = mat->FresnelR0;
+			matData.Roughness = mat->Roughness;
+			XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
+			matData.DiffuseMapIndex = mat->DiffuseSrvHeapIndex;
 
-			currMatCB->CopyData(mat->MatCBIndex, matConstants);
+			currMatCB->CopyData(mat->MatCBIndex, matData);
 
 			// Next FrameResource need to be updated too.
 			mat->NumFramesDirty--;
@@ -685,23 +760,74 @@ void RenderPass::DrawRenderItems(const SystemTimer& Timer)
 	{
 		auto ri = OpaqueRitems[i];
 
-		D3D12_VERTEX_BUFFER_VIEW riVertixView = ri->Geo->VertexBufferView();
-		D3D12_INDEX_BUFFER_VIEW riIndexView = ri->Geo->IndexBufferView();
-		pCommandList->IASetVertexBuffers(0, 1, &riVertixView);
-		pCommandList->IASetIndexBuffer(&riIndexView);
+		D3D12_VERTEX_BUFFER_VIEW vertexBuffView = ri->Geo->VertexBufferView();
+		D3D12_INDEX_BUFFER_VIEW indexBuffView = ri->Geo->IndexBufferView();
+		pCommandList->IASetVertexBuffers(0, 1, &vertexBuffView);
+		pCommandList->IASetIndexBuffer(&indexBuffView);
 		pCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
 
-		// Offset to the CBV in the descriptor heap for this object and for this frame resource.
-		UINT cbvIndex = FrameResourceIndex * ((UINT)OpaqueRitems.size() + (UINT)Materials.size()) + ri->ObjCBIndex;
-		auto cbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(CBVHeap->GetGPUDescriptorHandleForHeapStart());
-		cbvHandle.Offset(cbvIndex, ConstantDDescriptorSize);
-
-		pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
-		UINT cbvMatIndex = (FrameResourceIndex+1) * (UINT)OpaqueRitems.size() + FrameResourceIndex* (UINT)Materials.size() +  ri->Mat->MatCBIndex;
-		auto cbvMatHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(CBVHeap->GetGPUDescriptorHandleForHeapStart());
-		cbvMatHandle.Offset(cbvMatIndex, ConstantDDescriptorSize);
-		pCommandList->SetGraphicsRootDescriptorTable(1, cbvMatHandle);
+		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
+		// 仅设置对象自身数据属性
+		pCommandList->SetGraphicsRootConstantBufferView(0, objCBAddress);
 
 		pCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
 	}
+}
+
+
+std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> RenderPass::GetStaticSamplers()
+{
+	// Applications usually only need a handful of samplers.  So just define them all up front
+	// and keep them available as part of the root signature.  
+
+	const CD3DX12_STATIC_SAMPLER_DESC pointWrap(
+		0, // shaderRegister
+		D3D12_FILTER_MIN_MAG_MIP_POINT, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP); // addressW
+
+	const CD3DX12_STATIC_SAMPLER_DESC pointClamp(
+		1, // shaderRegister
+		D3D12_FILTER_MIN_MAG_MIP_POINT, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP); // addressW
+
+	const CD3DX12_STATIC_SAMPLER_DESC linearWrap(
+		2, // shaderRegister
+		D3D12_FILTER_MIN_MAG_MIP_LINEAR, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP); // addressW
+
+	const CD3DX12_STATIC_SAMPLER_DESC linearClamp(
+		3, // shaderRegister
+		D3D12_FILTER_MIN_MAG_MIP_LINEAR, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP); // addressW
+
+	const CD3DX12_STATIC_SAMPLER_DESC anisotropicWrap(
+		4, // shaderRegister
+		D3D12_FILTER_ANISOTROPIC, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressW
+		0.0f,                             // mipLODBias
+		8);                               // maxAnisotropy
+
+	const CD3DX12_STATIC_SAMPLER_DESC anisotropicClamp(
+		5, // shaderRegister
+		D3D12_FILTER_ANISOTROPIC, // filter
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressW
+		0.0f,                              // mipLODBias
+		8);                                // maxAnisotropy
+
+	return {
+		pointWrap, pointClamp,
+		linearWrap, linearClamp,
+		anisotropicWrap, anisotropicClamp };
 }

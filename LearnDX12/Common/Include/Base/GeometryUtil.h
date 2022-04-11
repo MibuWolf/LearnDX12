@@ -7,6 +7,11 @@
 struct ObjectConstants
 {
     XMFLOAT4X4 World = MathHelper::Identity4x4();   // 每个几何对象的世界空间矩阵
+    DirectX::XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
+    UINT     MaterialIndex;     // 当前渲染对象使用的材质索引(对应与材质数组中的索引)
+    UINT     ObjPad0;
+    UINT     ObjPad1;
+    UINT     ObjPad2;
 };
 
 
@@ -20,8 +25,14 @@ struct MaterialConstants
     // 粗糙度
     float Roughness = 0.25f;
 
+    // 增加纹理索引数据
+    UINT DiffuseMapIndex = 0;
     // Used in texture mapping.
     DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
+
+    UINT MaterialPad0;
+    UINT MaterialPad1;
+    UINT MaterialPad2;
 };
 
 // 为后期光照计算与其他效果计算增加一些常用数据
@@ -72,21 +83,24 @@ struct RenderItem
     // 要渲染模型几何体的世界空间矩阵信息
     XMFLOAT4X4 World = MathHelper::Identity4x4();
 
-    // Dirty标记，用来表示在此(NumFramesDirty)帧资源中物体相关数据已发生改变，也就是说此时
-    // 需要更新此FrameResource中的常量缓冲区数据
+    XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
+
+    // Dirty flag indicating the object data has changed and we need to update the constant buffer.
+    // Because we have an object cbuffer for each FrameResource, we have to apply the
+    // update to each FrameResource.  Thus, when we modify obect data we should set 
+    // NumFramesDirty = gNumFrameResources so that each frame resource gets the update.
     int NumFramesDirty = gNumFrameResources;
 
-    // 该索引指向当前渲染项物体对应的GPU常量缓冲区索引
+    // Index into GPU constant buffer corresponding to the ObjectCB for this render item.
     UINT ObjCBIndex = -1;
-    // 当前渲染物体的模型信息
-    MeshGeometry* Geo = nullptr;
-    // 材质信息
+
     Material* Mat = nullptr;
+    MeshGeometry* Geo = nullptr;
 
-    // 当前模型要绘制的图元类型
-    D3D12_PRIMITIVE_TOPOLOGY PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    // Primitive topology.
+    D3D12_PRIMITIVE_TOPOLOGY PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
-    // 绘制该模型时的DrawIndexedInstanced参数.
+    // DrawIndexedInstanced parameters.
     UINT IndexCount = 0;
     UINT StartIndexLocation = 0;
     int BaseVertexLocation = 0;

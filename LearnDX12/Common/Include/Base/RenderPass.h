@@ -21,6 +21,7 @@ public:
 
 protected:
 
+	virtual void		LoadTextures();
 	virtual void		BuildRootSignature();
 	virtual void		BuildShadersAndInputLayout();
 	virtual void		BuildShapeGeometry();
@@ -36,15 +37,19 @@ protected:
 
 	virtual void		DrawRenderItems(const SystemTimer& Timer);
 
+	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+
 protected:
 
 	ComPtr<ID3D12RootSignature> RootSignature = nullptr;
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> Geometries;
 	std::unordered_map<std::string, std::unique_ptr<Material>> Materials;
+	std::unordered_map<std::string, std::unique_ptr<Texture>> Textures;
 	ComPtr<ID3D12DescriptorHeap> CBVHeap = nullptr;
 	ComPtr<ID3D12DescriptorHeap> SRVDescriptorHeap = nullptr;
 	std::unordered_map<std::string, ComPtr<ID3DBlob>> Shaders;
 	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> PSOs;
+	ComPtr<ID3D12DescriptorHeap> SrvDescriptorHeap = nullptr;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayout;
 
 	PassConstants MainPassCB;
