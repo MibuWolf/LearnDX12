@@ -18,12 +18,21 @@
 // Include structures and functions for lighting.
 #include "LightingUtil.hlsl"
 
-// 材质数据定义对应与材质的结构化缓冲区中的数据类型
+struct InstanceData
+{
+	float4x4 World;
+	float4x4 TexTransform;
+	uint     MaterialIndex;
+	uint     InstPad0;
+	uint     InstPad1;
+	uint     InstPad2;
+};
+
 struct MaterialData
 {
 	float4   DiffuseAlbedo;
-	float3   FresnelR0;
-	float    Roughness;
+    float3   FresnelR0;
+    float    Roughness;
 	float4x4 MatTransform;
 	uint     DiffuseMapIndex;
 	uint     MatPad0;
@@ -31,14 +40,14 @@ struct MaterialData
 	uint     MatPad2;
 };
 
+// An array of textures, which is only supported in shader model 5.1+.  Unlike Texture2DArray, the textures
+// in this array can be different sizes and formats, making it more flexible than texture arrays.
+Texture2D gDiffuseMap[7] : register(t0);
 
-// 包含四张纹理的纹理数组，材质数据中的DiffuseMapIndex对应该纹理数组的索引，放在t0缓冲区 默认space0空间
-Texture2D gDiffuseMap[4] : register(t0);
-
-// 将存放材质数组的结构化缓冲区放置在t0缓冲区的space1空间，之所以放在space1空间时为了避免与纹理数组相互影响
-// 因为纹理数组放在在t0缓冲区的space0空间一位置，数组中的四个纹理描述符将占据t0,t1,t2,t3
-StructuredBuffer<MaterialData> gMaterialData : register(t0, space1);
-
+// Put in space1, so the texture array does not overlap with these resources.  
+// The texture array will occupy registers t0, t1, ..., t6 in space0. 
+StructuredBuffer<InstanceData> gInstanceData : register(t0, space1);
+StructuredBuffer<MaterialData> gMaterialData : register(t1, space1);
 
 SamplerState gsamPointWrap        : register(s0);
 SamplerState gsamPointClamp       : register(s1);
@@ -47,19 +56,8 @@ SamplerState gsamLinearClamp      : register(s3);
 SamplerState gsamAnisotropicWrap  : register(s4);
 SamplerState gsamAnisotropicClamp : register(s5);
 
-// 每个渲染对象的常量数据放置在b0缓冲区
-cbuffer cbPerObject : register(b0)
-{
-    float4x4 gWorld;
-	float4x4 gTexTransform;
-	uint gMaterialIndex;
-	uint gObjPad0;
-	uint gObjPad1;
-	uint gObjPad2;
-};
-
-// 每个渲染Pass的常量数据放置在b1缓冲区
-cbuffer cbPass : register(b1)
+// Constant data that varies per pass.
+cbuffer cbPass : register(b0)
 {
     float4x4 gView;
     float4x4 gInvView;
@@ -97,27 +95,39 @@ struct VertexOut
     float3 PosW    : POSITION;
     float3 NormalW : NORMAL;
 	float2 TexC    : TEXCOORD;
+	
+	// nointerpolation is used so the index is not interpolated 
+	// across the triangle.
+	nointerpolation uint MatIndex  : MATINDEX;
 };
 
-VertexOut VS(VertexIn vin)
+VertexOut VS(VertexIn vin, uint instanceID : SV_InstanceID)
 {
 	VertexOut vout = (VertexOut)0.0f;
+	
+	// Fetch the instance data.
+	InstanceData instData = gInstanceData[instanceID];
+	float4x4 world = instData.World;
+	float4x4 texTransform = instData.TexTransform;
+	uint matIndex = instData.MaterialIndex;
 
-	// 利用动态索引获取当前渲染对象的材质信息
-	MaterialData matData = gMaterialData[gMaterialIndex];
+	vout.MatIndex = matIndex;
+	
+	// Fetch the material data.
+	MaterialData matData = gMaterialData[matIndex];
 	
     // Transform to world space.
-    float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
+    float4 posW = mul(float4(vin.PosL, 1.0f), world);
     vout.PosW = posW.xyz;
 
     // Assumes nonuniform scaling; otherwise, need to use inverse-transpose of world matrix.
-    vout.NormalW = mul(vin.NormalL, (float3x3)gWorld);
+    vout.NormalW = mul(vin.NormalL, (float3x3)world);
 
     // Transform to homogeneous clip space.
     vout.PosH = mul(posW, gViewProj);
 	
 	// Output vertex attributes for interpolation across triangle.
-	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
+	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), texTransform);
 	vout.TexC = mul(texC, matData.MatTransform).xy;
 	
     return vout;
@@ -126,14 +136,14 @@ VertexOut VS(VertexIn vin)
 float4 PS(VertexOut pin) : SV_Target
 {
 	// Fetch the material data.
-	MaterialData matData = gMaterialData[gMaterialIndex];
+	MaterialData matData = gMaterialData[pin.MatIndex];
 	float4 diffuseAlbedo = matData.DiffuseAlbedo;
-	float3 fresnelR0 = matData.FresnelR0;
-	float  roughness = matData.Roughness;
+    float3 fresnelR0 = matData.FresnelR0;
+    float  roughness = matData.Roughness;
 	uint diffuseTexIndex = matData.DiffuseMapIndex;
-
+	
 	// Dynamically look up the texture in the array.
-	diffuseAlbedo *= gDiffuseMap[diffuseTexIndex].Sample(gsamLinearWrap, pin.TexC);
+    diffuseAlbedo *= gDiffuseMap[diffuseTexIndex].Sample(gsamLinearWrap, pin.TexC);
 	
     // Interpolating normal can unnormalize it, so renormalize it.
     pin.NormalW = normalize(pin.NormalW);

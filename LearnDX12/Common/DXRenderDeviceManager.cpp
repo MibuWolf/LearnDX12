@@ -281,7 +281,7 @@ void DXRenderDeviceManager::UploadObjectConstantBuffer(const ObjectConstants& Ob
 	if (CurrObjectCB == nullptr)
 		return;
 
-	CurrObjectCB->CopyData(ObjectCBIndex, ObjectConstantsData);
+	//CurrObjectCB->CopyData(ObjectCBIndex, ObjectConstantsData);
 }
 
 FrameResource* DXRenderDeviceManager::GetCurrentFrameResource()

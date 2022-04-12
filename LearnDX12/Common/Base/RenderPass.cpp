@@ -29,7 +29,7 @@ void RenderPass::Initialize()
 	// 为每个网格模型的渲染实例记录渲染项信息
 	BuildRenderItems();
 	// 创建一个renderpass常量缓冲区和OpaqueRitems.size()个对象常量缓冲区的帧资源
-	DXRenderDeviceManager::GetInstance().CreateFrameResources(OpaqueRitems.size(), Materials.size());
+	DXRenderDeviceManager::GetInstance().CreateFrameResources(mInstanceCount, Materials.size());
 	// 为三个FrameRender(每个FrameRender分别有对象常量缓冲区和RenderPass常量缓冲区两个缓冲区)的常量缓冲区创建描述符堆
 	BuildDescriptorHeaps();
 	// 为三个FrameRender中的每个缓冲区创建描述符并存储在描述符堆中
@@ -65,11 +65,11 @@ void RenderPass::Draw(const SystemTimer& Timer)
 
 	// 绑定渲染Pass参数
 	auto passCB = CurrentFrameResource->PassCB->Resource();
-	pCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+	pCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
 
 	// 绑定材质数组
 	auto matBuffer = CurrentFrameResource->MaterialCB->Resource();
-	pCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
+	pCommandList->SetGraphicsRootShaderResourceView(1, matBuffer->GetGPUVirtualAddress());
 
 	// 绑定纹理数组
 	pCommandList->SetGraphicsRootDescriptorTable(3, SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
@@ -85,6 +85,7 @@ void RenderPass::LoadTextures()
 	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
+
 	auto bricksTex = std::make_unique<Texture>();
 	bricksTex->Name = "bricksTex";
 	bricksTex->Filename = L"Textures/bricks.dds";
@@ -113,10 +114,34 @@ void RenderPass::LoadTextures()
 		pCommandList, crateTex->Filename.c_str(),
 		crateTex->Resource, crateTex->UploadHeap));
 
+	auto iceTex = std::make_unique<Texture>();
+	iceTex->Name = "iceTex";
+	iceTex->Filename = L"Textures/ice.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
+		pCommandList, iceTex->Filename.c_str(),
+		iceTex->Resource, iceTex->UploadHeap));
+
+	auto grassTex = std::make_unique<Texture>();
+	grassTex->Name = "grassTex";
+	grassTex->Filename = L"Textures/grass.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
+		pCommandList, grassTex->Filename.c_str(),
+		grassTex->Resource, grassTex->UploadHeap));
+
+	auto defaultTex = std::make_unique<Texture>();
+	defaultTex->Name = "defaultTex";
+	defaultTex->Filename = L"Textures/white1x1.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
+		pCommandList, defaultTex->Filename.c_str(),
+		defaultTex->Resource, defaultTex->UploadHeap));
+
 	Textures[bricksTex->Name] = std::move(bricksTex);
 	Textures[stoneTex->Name] = std::move(stoneTex);
 	Textures[tileTex->Name] = std::move(tileTex);
 	Textures[crateTex->Name] = std::move(crateTex);
+	Textures[iceTex->Name] = std::move(iceTex);
+	Textures[grassTex->Name] = std::move(grassTex);
+	Textures[defaultTex->Name] = std::move(defaultTex);
 }
 
 void RenderPass::BuildRootSignature()
@@ -128,17 +153,16 @@ void RenderPass::BuildRootSignature()
 		return;
 
 	CD3DX12_DESCRIPTOR_RANGE texTable;
-	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0);
+	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 7, 0, 0);		// 定义纹理描述符SRV总共有7个
 
 	// Root parameter can be a table, root descriptor or root constants.
 	CD3DX12_ROOT_PARAMETER slotRootParameter[4];
 
-	// 跟进更新频率高低定义根参数
-	slotRootParameter[0].InitAsConstantBufferView(0);	// 每个渲染对象的常量缓冲区
-	slotRootParameter[1].InitAsConstantBufferView(1);	// 每个渲染Pass的常量缓冲区
-	slotRootParameter[2].InitAsShaderResourceView(0, 1);	// 存储材质数组的结构化缓冲区数组被定义为SRV类型并指定放置在space1
-	slotRootParameter[3].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);	// 定义位置数组  根参数类型为根描述符表
-
+	// 根据更新频率高低定义根参数
+	slotRootParameter[0].InitAsShaderResourceView(0, 1);	// 每个渲染示例的参数缓冲区 默认放在space0空间
+	slotRootParameter[1].InitAsShaderResourceView(1, 1);	// 存储材质数组的结构化缓冲区数组被定义为SRV类型并指定放置在space1
+	slotRootParameter[2].InitAsConstantBufferView(0);		// 每个RenderPass常量缓冲区数据
+	slotRootParameter[3].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);	// 根描述符表，输入的是纹理描述符堆
 
 	auto staticSamplers = GetStaticSamplers();
 
@@ -179,8 +203,9 @@ void RenderPass::BuildShadersAndInputLayout()
 	Shaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
 
 	InputLayout =
-	{
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+	{				
+		// 只使用多实例绘制时应将逐顶点数据类型改为逐实例类型D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }, 
 		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
@@ -195,98 +220,83 @@ void RenderPass::BuildShapeGeometry()
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
 
-	// 根据程序计算出各种形状几何体的顶点和索引数据
-	GeometryGenerator geoGen;
-	GeometryGenerator::MeshData box = geoGen.CreateBox(1.5f, 0.5f, 1.5f, 3);
-	GeometryGenerator::MeshData grid = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
-	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
-	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
+	std::ifstream fin("Models/skull.txt");
 
-	// 我们将所有的顶点/索引数据存储在一个大的顶点/缩影缓冲区中
-	// 因此我们需要记录每个几何模型的顶点/索引偏移值
+	if (!fin)
+	{
+		MessageBox(0, L"Models/skull.txt not found.", 0, 0);
+		return;
+	}
 
-	UINT boxVertexOffset = 0;
-	UINT gridVertexOffset = (UINT)box.Vertices.size();
-	UINT sphereVertexOffset = gridVertexOffset + (UINT)grid.Vertices.size();
-	UINT cylinderVertexOffset = sphereVertexOffset + (UINT)sphere.Vertices.size();
+	UINT vcount = 0;
+	UINT tcount = 0;
+	std::string ignore;
 
-	UINT boxIndexOffset = 0;
-	UINT gridIndexOffset = (UINT)box.Indices32.size();
-	UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
-	UINT cylinderIndexOffset = sphereIndexOffset + (UINT)sphere.Indices32.size();
+	fin >> ignore >> vcount;
+	fin >> ignore >> tcount;
+	fin >> ignore >> ignore >> ignore >> ignore;
 
-	// Define the SubmeshGeometry that cover different 
-	// regions of the vertex/index buffers.
+	XMFLOAT3 vMinf3(+MathHelper::Infinity, +MathHelper::Infinity, +MathHelper::Infinity);
+	XMFLOAT3 vMaxf3(-MathHelper::Infinity, -MathHelper::Infinity, -MathHelper::Infinity);
 
-	SubmeshGeometry boxSubmesh;
-	boxSubmesh.IndexCount = (UINT)box.Indices32.size();
-	boxSubmesh.StartIndexLocation = boxIndexOffset;
-	boxSubmesh.BaseVertexLocation = boxVertexOffset;
+	XMVECTOR vMin = XMLoadFloat3(&vMinf3);
+	XMVECTOR vMax = XMLoadFloat3(&vMaxf3);
 
-	SubmeshGeometry gridSubmesh;
-	gridSubmesh.IndexCount = (UINT)grid.Indices32.size();
-	gridSubmesh.StartIndexLocation = gridIndexOffset;
-	gridSubmesh.BaseVertexLocation = gridVertexOffset;
+	std::vector<Vertex> vertices(vcount);
+	for (UINT i = 0; i < vcount; ++i)
+	{
+		fin >> vertices[i].Pos.x >> vertices[i].Pos.y >> vertices[i].Pos.z;
+		fin >> vertices[i].Normal.x >> vertices[i].Normal.y >> vertices[i].Normal.z;
 
-	SubmeshGeometry sphereSubmesh;
-	sphereSubmesh.IndexCount = (UINT)sphere.Indices32.size();
-	sphereSubmesh.StartIndexLocation = sphereIndexOffset;
-	sphereSubmesh.BaseVertexLocation = sphereVertexOffset;
+		XMVECTOR P = XMLoadFloat3(&vertices[i].Pos);
 
-	SubmeshGeometry cylinderSubmesh;
-	cylinderSubmesh.IndexCount = (UINT)cylinder.Indices32.size();
-	cylinderSubmesh.StartIndexLocation = cylinderIndexOffset;
-	cylinderSubmesh.BaseVertexLocation = cylinderVertexOffset;
+		// Project point onto unit sphere and generate spherical texture coordinates.
+		XMFLOAT3 spherePos;
+		XMStoreFloat3(&spherePos, XMVector3Normalize(P));
+
+		float theta = atan2f(spherePos.z, spherePos.x);
+
+		// Put in [0, 2pi].
+		if (theta < 0.0f)
+			theta += XM_2PI;
+
+		float phi = acosf(spherePos.y);
+
+		float u = theta / (2.0f * XM_PI);
+		float v = phi / XM_PI;
+
+		vertices[i].TexC = { u, v };
+
+		vMin = XMVectorMin(vMin, P);
+		vMax = XMVectorMax(vMax, P);
+	}
+
+	BoundingBox bounds;
+	XMStoreFloat3(&bounds.Center, 0.5f * (vMin + vMax));
+	XMStoreFloat3(&bounds.Extents, 0.5f * (vMax - vMin));
+
+	fin >> ignore;
+	fin >> ignore;
+	fin >> ignore;
+
+	std::vector<std::int32_t> indices(3 * tcount);
+	for (UINT i = 0; i < tcount; ++i)
+	{
+		fin >> indices[i * 3 + 0] >> indices[i * 3 + 1] >> indices[i * 3 + 2];
+	}
+
+	fin.close();
 
 	//
-	// Extract the vertex elements we are interested in and pack the
-	// vertices of all the meshes into one vertex buffer.
+	// Pack the indices of all the meshes into one index buffer.
 	//
-
-	auto totalVertexCount =
-		box.Vertices.size() +
-		grid.Vertices.size() +
-		sphere.Vertices.size() +
-		cylinder.Vertices.size();
-
-	std::vector<Vertex> vertices(totalVertexCount);
-
-	UINT k = 0;
-	for (size_t i = 0; i < box.Vertices.size(); ++i, ++k)
-	{
-		vertices[k].Pos = box.Vertices[i].Position;
-		vertices[k].Normal = box.Vertices[i].Normal;
-	}
-
-	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
-	{
-		vertices[k].Pos = grid.Vertices[i].Position;
-		vertices[k].Normal = grid.Vertices[i].Normal;
-	}
-
-	for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
-	{
-		vertices[k].Pos = sphere.Vertices[i].Position;
-		vertices[k].Normal = sphere.Vertices[i].Normal;
-	}
-
-	for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
-	{
-		vertices[k].Pos = cylinder.Vertices[i].Position;
-		vertices[k].Normal = cylinder.Vertices[i].Normal;
-	}
-
-	std::vector<std::uint16_t> indices;
-	indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
-	indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
-	indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
-	indices.insert(indices.end(), std::begin(cylinder.GetIndices16()), std::end(cylinder.GetIndices16()));
 
 	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
-	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
+
+	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::int32_t);
 
 	auto geo = std::make_unique<MeshGeometry>();
-	geo->Name = "shapeGeo";
+	geo->Name = "skullGeo";
 
 	ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
 	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
@@ -302,13 +312,16 @@ void RenderPass::BuildShapeGeometry()
 
 	geo->VertexByteStride = sizeof(Vertex);
 	geo->VertexBufferByteSize = vbByteSize;
-	geo->IndexFormat = DXGI_FORMAT_R16_UINT;
+	geo->IndexFormat = DXGI_FORMAT_R32_UINT;
 	geo->IndexBufferByteSize = ibByteSize;
 
-	geo->DrawArgs["box"] = boxSubmesh;
-	geo->DrawArgs["grid"] = gridSubmesh;
-	geo->DrawArgs["sphere"] = sphereSubmesh;
-	geo->DrawArgs["cylinder"] = cylinderSubmesh;
+	SubmeshGeometry submesh;
+	submesh.IndexCount = (UINT)indices.size();
+	submesh.StartIndexLocation = 0;
+	submesh.BaseVertexLocation = 0;
+	submesh.Bounds = bounds;
+
+	geo->DrawArgs["skull"] = submesh;
 
 	Geometries[geo->Name] = std::move(geo);
 }
@@ -340,106 +353,100 @@ void RenderPass::BuildMaterials()
 	tile0->Roughness = 0.3f;
 
 	auto crate0 = std::make_unique<Material>();
-	crate0->Name = "crate0";
+	crate0->Name = "checkboard0";
 	crate0->MatCBIndex = 3;
 	crate0->DiffuseSrvHeapIndex = 3;
 	crate0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 	crate0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
 	crate0->Roughness = 0.2f;
 
+	auto ice0 = std::make_unique<Material>();
+	ice0->Name = "ice0";
+	ice0->MatCBIndex = 4;
+	ice0->DiffuseSrvHeapIndex = 4;
+	ice0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	ice0->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
+	ice0->Roughness = 0.0f;
+
+	auto grass0 = std::make_unique<Material>();
+	grass0->Name = "grass0";
+	grass0->MatCBIndex = 5;
+	grass0->DiffuseSrvHeapIndex = 5;
+	grass0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	grass0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
+	grass0->Roughness = 0.2f;
+
+	auto skullMat = std::make_unique<Material>();
+	skullMat->Name = "skullMat";
+	skullMat->MatCBIndex = 6;
+	skullMat->DiffuseSrvHeapIndex = 6;
+	skullMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	skullMat->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
+	skullMat->Roughness = 0.5f;
+
 	Materials["bricks0"] = std::move(bricks0);
 	Materials["stone0"] = std::move(stone0);
 	Materials["tile0"] = std::move(tile0);
 	Materials["crate0"] = std::move(crate0);
+	Materials["ice0"] = std::move(ice0);
+	Materials["grass0"] = std::move(grass0);
+	Materials["skullMat"] = std::move(skullMat);
 }
 
 
 void RenderPass::BuildRenderItems()
 {
-	auto boxRitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f));
-	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
-	boxRitem->ObjCBIndex = 0;
-	boxRitem->Mat = Materials["crate0"].get();
-	boxRitem->Geo = Geometries["shapeGeo"].get();
-	boxRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
-	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
-	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
-	AllRItems.push_back(std::move(boxRitem));
+	auto skullRitem = std::make_unique<RenderItem>();
+	skullRitem->World = MathHelper::Identity4x4();
+	skullRitem->TexTransform = MathHelper::Identity4x4();
+	skullRitem->ObjCBIndex = 0;
+	skullRitem->Mat = Materials["tile0"].get();
+	skullRitem->Geo = Geometries["skullGeo"].get();
+	skullRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	skullRitem->InstanceCount = 0;
+	skullRitem->IndexCount = skullRitem->Geo->DrawArgs["skull"].IndexCount;
+	skullRitem->StartIndexLocation = skullRitem->Geo->DrawArgs["skull"].StartIndexLocation;
+	skullRitem->BaseVertexLocation = skullRitem->Geo->DrawArgs["skull"].BaseVertexLocation;
+	skullRitem->Bounds = skullRitem->Geo->DrawArgs["skull"].Bounds;
 
-	auto gridRitem = std::make_unique<RenderItem>();
-	gridRitem->World = MathHelper::Identity4x4();
-	XMStoreFloat4x4(&gridRitem->TexTransform, XMMatrixScaling(8.0f, 8.0f, 1.0f));
-	gridRitem->ObjCBIndex = 1;
-	gridRitem->Mat = Materials["tile0"].get();
-	gridRitem->Geo = Geometries["shapeGeo"].get();
-	gridRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
-	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
-	gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
-	AllRItems.push_back(std::move(gridRitem));
+	// Generate instance data.
+	const int n = 5;
+	mInstanceCount = n * n * n;
+	skullRitem->Instances.resize(mInstanceCount);
 
-	XMMATRIX brickTexTransform = XMMatrixScaling(1.0f, 1.0f, 1.0f);
-	UINT objCBIndex = 2;
-	for (int i = 0; i < 5; ++i)
+
+	float width = 200.0f;
+	float height = 200.0f;
+	float depth = 200.0f;
+
+	float x = -0.5f * width;
+	float y = -0.5f * height;
+	float z = -0.5f * depth;
+	float dx = width / (n - 1);
+	float dy = height / (n - 1);
+	float dz = depth / (n - 1);
+	for (int k = 0; k < n; ++k)
 	{
-		auto leftCylRitem = std::make_unique<RenderItem>();
-		auto rightCylRitem = std::make_unique<RenderItem>();
-		auto leftSphereRitem = std::make_unique<RenderItem>();
-		auto rightSphereRitem = std::make_unique<RenderItem>();
+		for (int i = 0; i < n; ++i)
+		{
+			for (int j = 0; j < n; ++j)
+			{
+				int index = k * n * n + i * n + j;
+				// Position instanced along a 3D grid.
+				skullRitem->Instances[index].World = XMFLOAT4X4(
+					1.0f, 0.0f, 0.0f, 0.0f,
+					0.0f, 1.0f, 0.0f, 0.0f,
+					0.0f, 0.0f, 1.0f, 0.0f,
+					x + j * dx, y + i * dy, z + k * dz, 1.0f);
 
-		XMMATRIX leftCylWorld = XMMatrixTranslation(-5.0f, 1.5f, -10.0f + i * 5.0f);
-		XMMATRIX rightCylWorld = XMMatrixTranslation(+5.0f, 1.5f, -10.0f + i * 5.0f);
-
-		XMMATRIX leftSphereWorld = XMMatrixTranslation(-5.0f, 3.5f, -10.0f + i * 5.0f);
-		XMMATRIX rightSphereWorld = XMMatrixTranslation(+5.0f, 3.5f, -10.0f + i * 5.0f);
-
-		XMStoreFloat4x4(&leftCylRitem->World, rightCylWorld);
-		XMStoreFloat4x4(&leftCylRitem->TexTransform, brickTexTransform);
-		leftCylRitem->ObjCBIndex = objCBIndex++;
-		leftCylRitem->Mat = Materials["bricks0"].get();
-		leftCylRitem->Geo = Geometries["shapeGeo"].get();
-		leftCylRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
-		leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
-		leftCylRitem->BaseVertexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
-
-		XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
-		XMStoreFloat4x4(&rightCylRitem->TexTransform, brickTexTransform);
-		rightCylRitem->ObjCBIndex = objCBIndex++;
-		rightCylRitem->Mat = Materials["bricks0"].get();
-		rightCylRitem->Geo = Geometries["shapeGeo"].get();
-		rightCylRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
-		rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
-		rightCylRitem->BaseVertexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
-
-		XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
-		leftSphereRitem->TexTransform = MathHelper::Identity4x4();
-		leftSphereRitem->ObjCBIndex = objCBIndex++;
-		leftSphereRitem->Mat = Materials["stone0"].get();
-		leftSphereRitem->Geo = Geometries["shapeGeo"].get();
-		leftSphereRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
-		leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
-		leftSphereRitem->BaseVertexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
-
-		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
-		rightSphereRitem->TexTransform = MathHelper::Identity4x4();
-		rightSphereRitem->ObjCBIndex = objCBIndex++;
-		rightSphereRitem->Mat = Materials["stone0"].get();
-		rightSphereRitem->Geo = Geometries["shapeGeo"].get();
-		rightSphereRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
-		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
-		rightSphereRitem->BaseVertexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
-
-		AllRItems.push_back(std::move(leftCylRitem));
-		AllRItems.push_back(std::move(rightCylRitem));
-		AllRItems.push_back(std::move(leftSphereRitem));
-		AllRItems.push_back(std::move(rightSphereRitem));
+				XMStoreFloat4x4(&skullRitem->Instances[index].TexTransform, XMMatrixScaling(2.0f, 2.0f, 1.0f));
+				skullRitem->Instances[index].MaterialIndex = index % Materials.size();
+			}
+		}
 	}
+
+
+	AllRItems.push_back(std::move(skullRitem));
 
 	// All the render items are opaque.
 	for (auto& e : AllRItems)
@@ -459,7 +466,7 @@ void RenderPass::BuildDescriptorHeaps()
 	// Create the SRV heap.
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 4;
+	srvHeapDesc.NumDescriptors = 7;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(pD3DDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&SrvDescriptorHeap)));
@@ -473,6 +480,9 @@ void RenderPass::BuildDescriptorHeaps()
 	auto stoneTex = Textures["stoneTex"]->Resource;
 	auto tileTex = Textures["tileTex"]->Resource;
 	auto crateTex = Textures["crateTex"]->Resource;
+	auto iceTex = Textures["iceTex"]->Resource;
+	auto grassTex = Textures["grassTex"]->Resource;
+	auto defaultTex = Textures["defaultTex"]->Resource;
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -503,6 +513,27 @@ void RenderPass::BuildDescriptorHeaps()
 	srvDesc.Format = crateTex->GetDesc().Format;
 	srvDesc.Texture2D.MipLevels = crateTex->GetDesc().MipLevels;
 	pD3DDevice->CreateShaderResourceView(crateTex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	hDescriptor.Offset(1, CbvSrvDescriptorSize);
+
+	srvDesc.Format = iceTex->GetDesc().Format;
+	srvDesc.Texture2D.MipLevels = iceTex->GetDesc().MipLevels;
+	pD3DDevice->CreateShaderResourceView(iceTex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	hDescriptor.Offset(1, CbvSrvDescriptorSize);
+
+	srvDesc.Format = grassTex->GetDesc().Format;
+	srvDesc.Texture2D.MipLevels = grassTex->GetDesc().MipLevels;
+	pD3DDevice->CreateShaderResourceView(grassTex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	hDescriptor.Offset(1, CbvSrvDescriptorSize);
+
+	srvDesc.Format = defaultTex->GetDesc().Format;
+	srvDesc.Texture2D.MipLevels = defaultTex->GetDesc().MipLevels;
+	pD3DDevice->CreateShaderResourceView(defaultTex.Get(), &srvDesc, hDescriptor);
 }
 
 
@@ -690,23 +721,25 @@ void RenderPass::TickRenderItems(const SystemTimer& Timer)
 	auto currObjectCB = CurrentFrameRender->ObjectCB.get();
 	for (auto& Item : AllRItems)
 	{
-		// Only update the cbuffer data if the constants have changed.  
-		// This needs to be tracked per frame resource.
-		if (Item->NumFramesDirty > 0)
+		const auto& instanceData = Item->Instances;
+
+		int visibleInstanceCount = 0;
+
+		for (UINT i = 0; i < (UINT)instanceData.size(); ++i)
 		{
-			XMMATRIX world = XMLoadFloat4x4(&Item->World);
-			XMMATRIX texTransform = XMLoadFloat4x4(&Item->TexTransform);
+			XMMATRIX world = XMLoadFloat4x4(&instanceData[i].World);
+			XMMATRIX texTransform = XMLoadFloat4x4(&instanceData[i].TexTransform);
 
-			ObjectConstants objConstants;
-			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
-			XMStoreFloat4x4(&objConstants.TexTransform, XMMatrixTranspose(texTransform));
-			objConstants.MaterialIndex = Item->Mat->MatCBIndex;
+			InstanceData data;
+			XMStoreFloat4x4(&data.World, XMMatrixTranspose(world));
+			XMStoreFloat4x4(&data.TexTransform, XMMatrixTranspose(texTransform));
+			data.MaterialIndex = instanceData[i].MaterialIndex;
 
-			currObjectCB->CopyData(Item->ObjCBIndex, objConstants);
-
-			// Next FrameResource need to be updated too.
-			Item->NumFramesDirty--;
+			// Write the instance data to structured buffer for the visible objects.
+			currObjectCB->CopyData(visibleInstanceCount++, data);
 		}
+
+		Item->InstanceCount = visibleInstanceCount;
 	}
 }
 
@@ -766,11 +799,12 @@ void RenderPass::DrawRenderItems(const SystemTimer& Timer)
 		pCommandList->IASetIndexBuffer(&indexBuffView);
 		pCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
 
-		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
-		// 仅设置对象自身数据属性
-		pCommandList->SetGraphicsRootConstantBufferView(0, objCBAddress);
+		// Set the instance buffer to use for this render-item.  For structured buffers, we can bypass 
+		// the heap and set as a root descriptor.
+		auto instanceBuffer = CurrentFrameResource->ObjectCB->Resource();
+		pCommandList->SetGraphicsRootShaderResourceView(0, instanceBuffer->GetGPUVirtualAddress());
 
-		pCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+		pCommandList->DrawIndexedInstanced(ri->IndexCount, ri->InstanceCount, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
 	}
 }
 

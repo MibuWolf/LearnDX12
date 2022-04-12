@@ -59,4 +59,5 @@ protected:
 	std::vector<RenderItem*> OpaqueRitems;
 
 	UINT PassCbvOffset = 0;
+	UINT mInstanceCount = 0;
 };

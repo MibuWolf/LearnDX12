@@ -15,6 +15,21 @@ struct ObjectConstants
 };
 
 
+// 为每个绘制示例定义该绘制示例的自身参数
+struct InstanceData
+{
+    // 世界空间矩阵
+    XMFLOAT4X4 World = MathHelper::Identity4x4();
+    // 该示例使用纹理的纹理坐标变换矩阵
+    XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
+    // 该渲染示例所使用的材质索引(索引到材质结构化数组数据)
+    UINT MaterialIndex;
+    UINT InstancePad0;
+    UINT InstancePad1;
+    UINT InstancePad2;
+};
+
+
 // 在常量缓冲区中存储的材质数据
 struct MaterialConstants
 {
@@ -24,11 +39,11 @@ struct MaterialConstants
     DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
     // 粗糙度
     float Roughness = 0.25f;
+    // Used in texture mapping.
+    DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
 
     // 增加纹理索引数据
     UINT DiffuseMapIndex = 0;
-    // Used in texture mapping.
-    DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
 
     UINT MaterialPad0;
     UINT MaterialPad1;
@@ -67,6 +82,7 @@ struct Vertex
 {
     XMFLOAT3 Pos;
     DirectX::XMFLOAT3 Normal;
+    XMFLOAT2 TexC;
 };
 
 
@@ -100,8 +116,11 @@ struct RenderItem
     // Primitive topology.
     D3D12_PRIMITIVE_TOPOLOGY PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
+    BoundingBox Bounds;
+    std::vector<InstanceData> Instances;
     // DrawIndexedInstanced parameters.
     UINT IndexCount = 0;
     UINT StartIndexLocation = 0;
     int BaseVertexLocation = 0;
+    UINT InstanceCount = 0;
 };
