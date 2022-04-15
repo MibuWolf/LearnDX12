@@ -15,74 +15,8 @@
     #define NUM_SPOT_LIGHTS 0
 #endif
 
-// Include structures and functions for lighting.
-#include "LightingUtil.hlsl"
-
-// 材质数据定义对应与材质的结构化缓冲区中的数据类型
-struct MaterialData
-{
-	float4   DiffuseAlbedo;
-	float3   FresnelR0;
-	float    Roughness;
-	float4x4 MatTransform;
-	uint     DiffuseMapIndex;
-	uint     MatPad0;
-	uint     MatPad1;
-	uint     MatPad2;
-};
-
-
-// 包含四张纹理的纹理数组，材质数据中的DiffuseMapIndex对应该纹理数组的索引，放在t0缓冲区 默认space0空间
-Texture2D gDiffuseMap[4] : register(t0);
-
-// 将存放材质数组的结构化缓冲区放置在t0缓冲区的space1空间，之所以放在space1空间时为了避免与纹理数组相互影响
-// 因为纹理数组放在在t0缓冲区的space0空间一位置，数组中的四个纹理描述符将占据t0,t1,t2,t3
-StructuredBuffer<MaterialData> gMaterialData : register(t0, space1);
-
-
-SamplerState gsamPointWrap        : register(s0);
-SamplerState gsamPointClamp       : register(s1);
-SamplerState gsamLinearWrap       : register(s2);
-SamplerState gsamLinearClamp      : register(s3);
-SamplerState gsamAnisotropicWrap  : register(s4);
-SamplerState gsamAnisotropicClamp : register(s5);
-
-// 每个渲染对象的常量数据放置在b0缓冲区
-cbuffer cbPerObject : register(b0)
-{
-    float4x4 gWorld;
-	float4x4 gTexTransform;
-	uint gMaterialIndex;
-	uint gObjPad0;
-	uint gObjPad1;
-	uint gObjPad2;
-};
-
-// 每个渲染Pass的常量数据放置在b1缓冲区
-cbuffer cbPass : register(b1)
-{
-    float4x4 gView;
-    float4x4 gInvView;
-    float4x4 gProj;
-    float4x4 gInvProj;
-    float4x4 gViewProj;
-    float4x4 gInvViewProj;
-    float3 gEyePosW;
-    float cbPerObjectPad1;
-    float2 gRenderTargetSize;
-    float2 gInvRenderTargetSize;
-    float gNearZ;
-    float gFarZ;
-    float gTotalTime;
-    float gDeltaTime;
-    float4 gAmbientLight;
-
-    // Indices [0, NUM_DIR_LIGHTS) are directional lights;
-    // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
-    // indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
-    // are spot lights for a maximum of MaxLights per object.
-    Light gLights[MaxLights];
-};
+// Include common HLSL code.
+#include "Common.hlsl"
 
 struct VertexIn
 {
@@ -103,7 +37,7 @@ VertexOut VS(VertexIn vin)
 {
 	VertexOut vout = (VertexOut)0.0f;
 
-	// 利用动态索引获取当前渲染对象的材质信息
+	// Fetch the material data.
 	MaterialData matData = gMaterialData[gMaterialIndex];
 	
     // Transform to world space.
@@ -133,7 +67,7 @@ float4 PS(VertexOut pin) : SV_Target
 	uint diffuseTexIndex = matData.DiffuseMapIndex;
 
 	// Dynamically look up the texture in the array.
-	diffuseAlbedo *= gDiffuseMap[diffuseTexIndex].Sample(gsamLinearWrap, pin.TexC);
+	diffuseAlbedo *= gDiffuseMap[diffuseTexIndex].Sample(gsamAnisotropicWrap, pin.TexC);
 	
     // Interpolating normal can unnormalize it, so renormalize it.
     pin.NormalW = normalize(pin.NormalW);
@@ -144,13 +78,19 @@ float4 PS(VertexOut pin) : SV_Target
     // Light terms.
     float4 ambient = gAmbientLight*diffuseAlbedo;
 
-    const float shininess = 1.0f - roughness;
+	const float shininess = 1.0f - roughness;
     Material mat = { diffuseAlbedo, fresnelR0, shininess };
     float3 shadowFactor = 1.0f;
     float4 directLight = ComputeLighting(gLights, mat, pin.PosW,
         pin.NormalW, toEyeW, shadowFactor);
 
     float4 litColor = ambient + directLight;
+
+	// Add in specular reflections.
+	float3 r = reflect(-toEyeW, pin.NormalW);
+	float4 reflectionColor = gCubeMap.Sample(gsamLinearWrap, r);
+	float3 fresnelFactor = SchlickFresnel(fresnelR0, pin.NormalW, r);
+	litColor.rgb += shininess * fresnelFactor * reflectionColor.rgb;
 
     // Common convention to take alpha from diffuse albedo.
     litColor.a = diffuseAlbedo.a;

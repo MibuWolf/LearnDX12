@@ -3,6 +3,15 @@
 #include "FrameResource.h"
 #include "SystemTimer.h"
 
+
+enum class RenderLayer : int
+{
+	Opaque = 0,
+	Sky,
+	Count
+};
+
+
 class RenderPass
 {
 public:
@@ -25,6 +34,7 @@ protected:
 	virtual void		BuildRootSignature();
 	virtual void		BuildShadersAndInputLayout();
 	virtual void		BuildShapeGeometry();
+	virtual void		BuildSkullGeometry();
 	virtual void		BuildMaterials();
 	virtual void		BuildRenderItems();
 	virtual void		BuildDescriptorHeaps();
@@ -35,7 +45,7 @@ protected:
 	virtual void		TickRenderItems(const SystemTimer& Timer);
 	virtual void		TickMaterials(const SystemTimer& Timer);
 
-	virtual void		DrawRenderItems(const SystemTimer& Timer);
+	virtual void		DrawRenderItems(const SystemTimer& Timer, RenderLayer LayerType);
 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
@@ -57,6 +67,9 @@ protected:
 
 	std::vector<std::unique_ptr<RenderItem>> AllRItems;
 	std::vector<RenderItem*> OpaqueRitems;
+	std::vector<RenderItem*> mRitemLayer[(int)RenderLayer::Count];
+
+	UINT	mSkyTexHeapIndex = 0;
 
 	UINT PassCbvOffset = 0;
 };

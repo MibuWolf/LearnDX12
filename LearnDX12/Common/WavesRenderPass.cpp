@@ -58,7 +58,7 @@ void WavesRenderPass::Draw(const SystemTimer& Timer)
 	pCommandList->SetGraphicsRootSignature(RootSignature.Get());
 	auto passCB = CurrentFrameResource->PassCB->Resource();
 	pCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
-	DrawRenderItems(Timer);
+	DrawRenderItems(Timer, RenderLayer::Opaque);
 }
 
 void WavesRenderPass::BuildRootSignature()
@@ -328,7 +328,7 @@ void WavesRenderPass::UpdateWaves(const SystemTimer& Timer)
 	mWavesRitem->Geo->VertexBufferGPU = currWavesVB->Resource();
 }
 
-void WavesRenderPass::DrawRenderItems(const SystemTimer& Timer)
+void WavesRenderPass::DrawRenderItems(const SystemTimer& Timer, RenderLayer LayerType)
 {
 	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
 	FrameResource* CurrentFrameRender = DXRenderDeviceManager::GetInstance().GetCurrentFrameResource();

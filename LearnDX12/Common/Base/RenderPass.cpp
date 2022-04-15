@@ -24,12 +24,13 @@ void RenderPass::Initialize()
 	BuildShadersAndInputLayout();
 	// 构建基本静态模型网格信息(将所有静态模型的顶点放到一个顶点缓冲区，索引也整合到一个索引缓冲区)
 	BuildShapeGeometry();
+	BuildSkullGeometry();
 	// 初始化材质信息
 	BuildMaterials();
 	// 为每个网格模型的渲染实例记录渲染项信息
 	BuildRenderItems();
 	// 创建一个renderpass常量缓冲区和OpaqueRitems.size()个对象常量缓冲区的帧资源
-	DXRenderDeviceManager::GetInstance().CreateFrameResources(OpaqueRitems.size(), Materials.size());
+	DXRenderDeviceManager::GetInstance().CreateFrameResources(AllRItems.size(), Materials.size());
 	// 为三个FrameRender(每个FrameRender分别有对象常量缓冲区和RenderPass常量缓冲区两个缓冲区)的常量缓冲区创建描述符堆
 	BuildDescriptorHeaps();
 	// 为三个FrameRender中的每个缓冲区创建描述符并存储在描述符堆中
@@ -57,10 +58,13 @@ void RenderPass::Draw(const SystemTimer& Timer)
 	UINT FrameResourceIndex = DXRenderDeviceManager::GetInstance().GetCurrentFrameResourceIndex();
 	UINT ConstantDDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
 
+	// 设置渲染流水线状态
 	pCommandList->SetPipelineState(PSOs["opaque"].Get());
+	// 设置纹理描述符堆
 	ID3D12DescriptorHeap* descriptorHeaps[] = { SrvDescriptorHeap.Get() };
 	pCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
+	// 设置根签名
 	pCommandList->SetGraphicsRootSignature(RootSignature.Get());
 
 	// 绑定渲染Pass参数
@@ -71,10 +75,19 @@ void RenderPass::Draw(const SystemTimer& Timer)
 	auto matBuffer = CurrentFrameResource->MaterialCB->Resource();
 	pCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
 
-	// 绑定纹理数组
-	pCommandList->SetGraphicsRootDescriptorTable(3, SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	// 设置天空球材质数据
+	CD3DX12_GPU_DESCRIPTOR_HANDLE skyTexDescriptor(SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	skyTexDescriptor.Offset(mSkyTexHeapIndex, ConstantDDescriptorSize);
+	pCommandList->SetGraphicsRootDescriptorTable(3, skyTexDescriptor);
 
-	DrawRenderItems(Timer);
+	// 绑定纹理数组
+	pCommandList->SetGraphicsRootDescriptorTable(4, SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+
+	DrawRenderItems(Timer, RenderLayer::Opaque);
+
+	// 设置天空球渲染流水线状态
+	pCommandList->SetPipelineState(PSOs["sky"].Get());
+	DrawRenderItems(Timer, RenderLayer::Sky);
 }
 
 
@@ -85,38 +98,33 @@ void RenderPass::LoadTextures()
 	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
-	auto bricksTex = std::make_unique<Texture>();
-	bricksTex->Name = "bricksTex";
-	bricksTex->Filename = L"Textures/bricks.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
-		pCommandList, bricksTex->Filename.c_str(),
-		bricksTex->Resource, bricksTex->UploadHeap));
+	std::vector<std::string> texNames =
+	{
+		"bricksDiffuseMap",
+		"tileDiffuseMap",
+		"defaultDiffuseMap",
+		"skyCubeMap"			// 天空盒的环境贴图
+	};
 
-	auto stoneTex = std::make_unique<Texture>();
-	stoneTex->Name = "stoneTex";
-	stoneTex->Filename = L"Textures/stone.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
-		pCommandList, stoneTex->Filename.c_str(),
-		stoneTex->Resource, stoneTex->UploadHeap));
+	std::vector<std::wstring> texFilenames =
+	{
+		L"Textures/bricks2.dds",
+		L"Textures/tile.dds",
+		L"Textures/white1x1.dds",
+		L"Textures/grasscube1024.dds"			// 像加载普通纹理一样加载环境立方体贴图贴图
+	};
 
-	auto tileTex = std::make_unique<Texture>();
-	tileTex->Name = "tileTex";
-	tileTex->Filename = L"Textures/tile.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
-		pCommandList, tileTex->Filename.c_str(),
-		tileTex->Resource, tileTex->UploadHeap));
+	for (int i = 0; i < (int)texNames.size(); ++i)
+	{
+		auto texMap = std::make_unique<Texture>();
+		texMap->Name = texNames[i];
+		texMap->Filename = texFilenames[i];
+		ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
+			pCommandList, texMap->Filename.c_str(),
+			texMap->Resource, texMap->UploadHeap));
 
-	auto crateTex = std::make_unique<Texture>();
-	crateTex->Name = "crateTex";
-	crateTex->Filename = L"Textures/WoodCrate01.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(pD3DDevice,
-		pCommandList, crateTex->Filename.c_str(),
-		crateTex->Resource, crateTex->UploadHeap));
-
-	Textures[bricksTex->Name] = std::move(bricksTex);
-	Textures[stoneTex->Name] = std::move(stoneTex);
-	Textures[tileTex->Name] = std::move(tileTex);
-	Textures[crateTex->Name] = std::move(crateTex);
+		Textures[texMap->Name] = std::move(texMap);
+	}
 }
 
 void RenderPass::BuildRootSignature()
@@ -127,23 +135,27 @@ void RenderPass::BuildRootSignature()
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
 
-	CD3DX12_DESCRIPTOR_RANGE texTable;
-	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0);
+	CD3DX12_DESCRIPTOR_RANGE texTable0;
+	texTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);	// 纹理描述符表 1个纹理描述符 对应0号寄存器 0号空间
 
-	// Root parameter can be a table, root descriptor or root constants.
-	CD3DX12_ROOT_PARAMETER slotRootParameter[4];
+	CD3DX12_DESCRIPTOR_RANGE texTable1;
+	texTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 1, 0);	// 纹理描述符表 5个纹理描述符 对应1号寄存器 0号空间
 
-	// 跟进更新频率高低定义根参数
-	slotRootParameter[0].InitAsConstantBufferView(0);	// 每个渲染对象的常量缓冲区
-	slotRootParameter[1].InitAsConstantBufferView(1);	// 每个渲染Pass的常量缓冲区
-	slotRootParameter[2].InitAsShaderResourceView(0, 1);	// 存储材质数组的结构化缓冲区数组被定义为SRV类型并指定放置在space1
-	slotRootParameter[3].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);	// 定义位置数组  根参数类型为根描述符表
+	// 五个根参数
+	CD3DX12_ROOT_PARAMETER slotRootParameter[5];
+
+	// 从更新频率高到低
+	slotRootParameter[0].InitAsConstantBufferView(0);	// 对应每个渲染对象的常量缓冲区数据映射到着色器中的b0寄存器
+	slotRootParameter[1].InitAsConstantBufferView(1);	// 对应每个渲染Pass的常量缓冲区数据映射到着色器中的b1寄存器
+	slotRootParameter[2].InitAsShaderResourceView(0, 1); // 对应材质数组的结构化缓冲区数据映射到着色器中t0寄存器的space1空间
+	slotRootParameter[3].InitAsDescriptorTable(1, &texTable0, D3D12_SHADER_VISIBILITY_PIXEL);		// 根描述符表对应的是放置在t0的环境贴图(立方体贴图)
+	slotRootParameter[4].InitAsDescriptorTable(1, &texTable1, D3D12_SHADER_VISIBILITY_PIXEL);		// 描述符表对对应的是放置在t1的普通纹理贴图数组
 
 
 	auto staticSamplers = GetStaticSamplers();
 
 	// A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(5, slotRootParameter,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -178,6 +190,9 @@ void RenderPass::BuildShadersAndInputLayout()
 	Shaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
 
+	Shaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");  // 对天空球的绘制与普通模型不同，因此需要对其做区分
+	Shaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", "ps_5_1");
+
 	InputLayout =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -195,16 +210,14 @@ void RenderPass::BuildShapeGeometry()
 	if (pD3DDevice == nullptr || pCommandList == nullptr)
 		return;
 
-	// 根据程序计算出各种形状几何体的顶点和索引数据
+	// 生成场景中的几何体模型数据，其中的球体可用作天空球
 	GeometryGenerator geoGen;
-	GeometryGenerator::MeshData box = geoGen.CreateBox(1.5f, 0.5f, 1.5f, 3);
+	GeometryGenerator::MeshData box = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 3);
 	GeometryGenerator::MeshData grid = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
 	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
 	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
 
-	// 我们将所有的顶点/索引数据存储在一个大的顶点/缩影缓冲区中
-	// 因此我们需要记录每个几何模型的顶点/索引偏移值
-
+	// 创建顶点和索引缓冲取并将创建出来的这些模型数据整理后存入顶点/索引缓冲区
 	UINT boxVertexOffset = 0;
 	UINT gridVertexOffset = (UINT)box.Vertices.size();
 	UINT sphereVertexOffset = gridVertexOffset + (UINT)grid.Vertices.size();
@@ -214,9 +227,6 @@ void RenderPass::BuildShapeGeometry()
 	UINT gridIndexOffset = (UINT)box.Indices32.size();
 	UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
 	UINT cylinderIndexOffset = sphereIndexOffset + (UINT)sphere.Indices32.size();
-
-	// Define the SubmeshGeometry that cover different 
-	// regions of the vertex/index buffers.
 
 	SubmeshGeometry boxSubmesh;
 	boxSubmesh.IndexCount = (UINT)box.Indices32.size();
@@ -256,24 +266,28 @@ void RenderPass::BuildShapeGeometry()
 	{
 		vertices[k].Pos = box.Vertices[i].Position;
 		vertices[k].Normal = box.Vertices[i].Normal;
+		vertices[k].TexC = box.Vertices[i].TexC;
 	}
 
 	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = grid.Vertices[i].Position;
 		vertices[k].Normal = grid.Vertices[i].Normal;
+		vertices[k].TexC = grid.Vertices[i].TexC;
 	}
 
 	for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = sphere.Vertices[i].Position;
 		vertices[k].Normal = sphere.Vertices[i].Normal;
+		vertices[k].TexC = sphere.Vertices[i].TexC;
 	}
 
 	for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = cylinder.Vertices[i].Position;
 		vertices[k].Normal = cylinder.Vertices[i].Normal;
+		vertices[k].TexC = cylinder.Vertices[i].TexC;
 	}
 
 	std::vector<std::uint16_t> indices;
@@ -313,6 +327,106 @@ void RenderPass::BuildShapeGeometry()
 	Geometries[geo->Name] = std::move(geo);
 }
 
+void RenderPass::BuildSkullGeometry()
+{
+	ID3D12Device* pD3DDevice = DXRenderDeviceManager::GetInstance().GetD3DDevice();
+	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
+
+	if (pD3DDevice == nullptr || pCommandList == nullptr)
+		return;
+
+
+	std::ifstream fin("Models/skull.txt");
+
+	if (!fin)
+	{
+		MessageBox(0, L"Models/skull.txt not found.", 0, 0);
+		return;
+	}
+
+	UINT vcount = 0;
+	UINT tcount = 0;
+	std::string ignore;
+
+	fin >> ignore >> vcount;
+	fin >> ignore >> tcount;
+	fin >> ignore >> ignore >> ignore >> ignore;
+
+	XMFLOAT3 vMinf3(+MathHelper::Infinity, +MathHelper::Infinity, +MathHelper::Infinity);
+	XMFLOAT3 vMaxf3(-MathHelper::Infinity, -MathHelper::Infinity, -MathHelper::Infinity);
+
+	XMVECTOR vMin = XMLoadFloat3(&vMinf3);
+	XMVECTOR vMax = XMLoadFloat3(&vMaxf3);
+
+	std::vector<Vertex> vertices(vcount);
+	for (UINT i = 0; i < vcount; ++i)
+	{
+		fin >> vertices[i].Pos.x >> vertices[i].Pos.y >> vertices[i].Pos.z;
+		fin >> vertices[i].Normal.x >> vertices[i].Normal.y >> vertices[i].Normal.z;
+
+		vertices[i].TexC = { 0.0f, 0.0f };
+
+		XMVECTOR P = XMLoadFloat3(&vertices[i].Pos);
+
+		vMin = XMVectorMin(vMin, P);
+		vMax = XMVectorMax(vMax, P);
+	}
+
+	BoundingBox bounds;
+	XMStoreFloat3(&bounds.Center, 0.5f * (vMin + vMax));
+	XMStoreFloat3(&bounds.Extents, 0.5f * (vMax - vMin));
+
+	fin >> ignore;
+	fin >> ignore;
+	fin >> ignore;
+
+	std::vector<std::int32_t> indices(3 * tcount);
+	for (UINT i = 0; i < tcount; ++i)
+	{
+		fin >> indices[i * 3 + 0] >> indices[i * 3 + 1] >> indices[i * 3 + 2];
+	}
+
+	fin.close();
+
+	//
+	// Pack the indices of all the meshes into one index buffer.
+	//
+
+	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
+
+	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::int32_t);
+
+	auto geo = std::make_unique<MeshGeometry>();
+	geo->Name = "skullGeo";
+
+	ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
+	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
+
+	ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
+	CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
+
+	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(pD3DDevice,
+		pCommandList, vertices.data(), vbByteSize, geo->VertexBufferUploader);
+
+	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(pD3DDevice,
+		pCommandList, indices.data(), ibByteSize, geo->IndexBufferUploader);
+
+	geo->VertexByteStride = sizeof(Vertex);
+	geo->VertexBufferByteSize = vbByteSize;
+	geo->IndexFormat = DXGI_FORMAT_R32_UINT;
+	geo->IndexBufferByteSize = ibByteSize;
+
+	SubmeshGeometry submesh;
+	submesh.IndexCount = (UINT)indices.size();
+	submesh.StartIndexLocation = 0;
+	submesh.BaseVertexLocation = 0;
+	submesh.Bounds = bounds;
+
+	geo->DrawArgs["skull"] = submesh;
+
+	Geometries[geo->Name] = std::move(geo);
+}
+
 void RenderPass::BuildMaterials()
 {
 	auto bricks0 = std::make_unique<Material>();
@@ -320,68 +434,109 @@ void RenderPass::BuildMaterials()
 	bricks0->MatCBIndex = 0;
 	bricks0->DiffuseSrvHeapIndex = 0;
 	bricks0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	bricks0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-	bricks0->Roughness = 0.1f;
-
-	auto stone0 = std::make_unique<Material>();
-	stone0->Name = "stone0";
-	stone0->MatCBIndex = 1;
-	stone0->DiffuseSrvHeapIndex = 1;
-	stone0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	stone0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
-	stone0->Roughness = 0.3f;
+	bricks0->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
+	bricks0->Roughness = 0.3f;
 
 	auto tile0 = std::make_unique<Material>();
 	tile0->Name = "tile0";
-	tile0->MatCBIndex = 2;
-	tile0->DiffuseSrvHeapIndex = 2;
-	tile0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	tile0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-	tile0->Roughness = 0.3f;
+	tile0->MatCBIndex = 1;
+	tile0->DiffuseSrvHeapIndex = 1;
+	tile0->DiffuseAlbedo = XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f);
+	tile0->FresnelR0 = XMFLOAT3(0.2f, 0.2f, 0.2f);
+	tile0->Roughness = 0.1f;
 
-	auto crate0 = std::make_unique<Material>();
-	crate0->Name = "crate0";
-	crate0->MatCBIndex = 3;
-	crate0->DiffuseSrvHeapIndex = 3;
-	crate0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	crate0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
-	crate0->Roughness = 0.2f;
+	auto mirror0 = std::make_unique<Material>();
+	mirror0->Name = "mirror0";
+	mirror0->MatCBIndex = 2;
+	mirror0->DiffuseSrvHeapIndex = 2;
+	mirror0->DiffuseAlbedo = XMFLOAT4(0.0f, 0.0f, 0.1f, 1.0f);
+	mirror0->FresnelR0 = XMFLOAT3(0.98f, 0.97f, 0.95f);
+	mirror0->Roughness = 0.1f;
+
+	auto skullMat = std::make_unique<Material>();
+	skullMat->Name = "skullMat";
+	skullMat->MatCBIndex = 3;
+	skullMat->DiffuseSrvHeapIndex = 2;
+	skullMat->DiffuseAlbedo = XMFLOAT4(0.8f, 0.8f, 0.8f, 1.0f);
+	skullMat->FresnelR0 = XMFLOAT3(0.2f, 0.2f, 0.2f);
+	skullMat->Roughness = 0.2f;
+
+	auto sky = std::make_unique<Material>();
+	sky->Name = "sky";									
+	sky->MatCBIndex = 4;						// 天空球的材质数据在材质缓冲区中的索引
+	sky->DiffuseSrvHeapIndex = 3;				// 天空球使用的纹理描述符在纹理描述符堆中的索引
+	sky->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);	// 漫反射反照率
+	sky->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);	// 0°时的反照率
+	sky->Roughness = 1.0f;			// 粗糙度
 
 	Materials["bricks0"] = std::move(bricks0);
-	Materials["stone0"] = std::move(stone0);
 	Materials["tile0"] = std::move(tile0);
-	Materials["crate0"] = std::move(crate0);
+	Materials["mirror0"] = std::move(mirror0);
+	Materials["skullMat"] = std::move(skullMat);
+	Materials["sky"] = std::move(sky);
 }
 
 
 void RenderPass::BuildRenderItems()
 {
+	auto skyRitem = std::make_unique<RenderItem>();
+	XMStoreFloat4x4(&skyRitem->World, XMMatrixScaling(5000.0f, 5000.0f, 5000.0f));	// 将球体缩放5000倍作为天空球
+	skyRitem->TexTransform = MathHelper::Identity4x4();
+	skyRitem->ObjCBIndex = 0;
+	skyRitem->Mat = Materials["sky"].get();	// 记录天空球使用的材质信息
+	skyRitem->Geo = Geometries["shapeGeo"].get();	// 模型信息
+	skyRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST; // 绘制的图元类型
+	skyRitem->IndexCount = skyRitem->Geo->DrawArgs["sphere"].IndexCount;	// 在所有模型中的索引
+	skyRitem->StartIndexLocation = skyRitem->Geo->DrawArgs["sphere"].StartIndexLocation;	// 索引缓冲区开始位置
+	skyRitem->BaseVertexLocation = skyRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;	// 顶点缓冲区开始位置
+
+	mRitemLayer[(int)RenderLayer::Sky].push_back(skyRitem.get());
+	AllRItems.push_back(std::move(skyRitem));
+
 	auto boxRitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f));
+	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 1.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f));
 	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
-	boxRitem->ObjCBIndex = 0;
-	boxRitem->Mat = Materials["crate0"].get();
+	boxRitem->ObjCBIndex = 1;
+	boxRitem->Mat = Materials["bricks0"].get();
 	boxRitem->Geo = Geometries["shapeGeo"].get();
 	boxRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
+
+	mRitemLayer[(int)RenderLayer::Opaque].push_back(boxRitem.get());
 	AllRItems.push_back(std::move(boxRitem));
+
+	auto skullRitem = std::make_unique<RenderItem>();
+	XMStoreFloat4x4(&skullRitem->World, XMMatrixScaling(0.4f, 0.4f, 0.4f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f));
+	skullRitem->TexTransform = MathHelper::Identity4x4();
+	skullRitem->ObjCBIndex = 2;
+	skullRitem->Mat = Materials["skullMat"].get();
+	skullRitem->Geo = Geometries["skullGeo"].get();
+	skullRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	skullRitem->IndexCount = skullRitem->Geo->DrawArgs["skull"].IndexCount;
+	skullRitem->StartIndexLocation = skullRitem->Geo->DrawArgs["skull"].StartIndexLocation;
+	skullRitem->BaseVertexLocation = skullRitem->Geo->DrawArgs["skull"].BaseVertexLocation;
+
+	mRitemLayer[(int)RenderLayer::Opaque].push_back(skullRitem.get());
+	AllRItems.push_back(std::move(skullRitem));
 
 	auto gridRitem = std::make_unique<RenderItem>();
 	gridRitem->World = MathHelper::Identity4x4();
 	XMStoreFloat4x4(&gridRitem->TexTransform, XMMatrixScaling(8.0f, 8.0f, 1.0f));
-	gridRitem->ObjCBIndex = 1;
+	gridRitem->ObjCBIndex = 3;
 	gridRitem->Mat = Materials["tile0"].get();
 	gridRitem->Geo = Geometries["shapeGeo"].get();
 	gridRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
 	gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
 	gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
+
+	mRitemLayer[(int)RenderLayer::Opaque].push_back(gridRitem.get());
 	AllRItems.push_back(std::move(gridRitem));
 
-	XMMATRIX brickTexTransform = XMMatrixScaling(1.0f, 1.0f, 1.0f);
-	UINT objCBIndex = 2;
+	XMMATRIX brickTexTransform = XMMatrixScaling(1.5f, 2.0f, 1.0f);
+	UINT objCBIndex = 4;
 	for (int i = 0; i < 5; ++i)
 	{
 		auto leftCylRitem = std::make_unique<RenderItem>();
@@ -418,7 +573,7 @@ void RenderPass::BuildRenderItems()
 		XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
 		leftSphereRitem->TexTransform = MathHelper::Identity4x4();
 		leftSphereRitem->ObjCBIndex = objCBIndex++;
-		leftSphereRitem->Mat = Materials["stone0"].get();
+		leftSphereRitem->Mat = Materials["mirror0"].get();
 		leftSphereRitem->Geo = Geometries["shapeGeo"].get();
 		leftSphereRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
@@ -428,22 +583,23 @@ void RenderPass::BuildRenderItems()
 		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
 		rightSphereRitem->TexTransform = MathHelper::Identity4x4();
 		rightSphereRitem->ObjCBIndex = objCBIndex++;
-		rightSphereRitem->Mat = Materials["stone0"].get();
+		rightSphereRitem->Mat = Materials["mirror0"].get();
 		rightSphereRitem->Geo = Geometries["shapeGeo"].get();
 		rightSphereRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
 		rightSphereRitem->BaseVertexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 
+		mRitemLayer[(int)RenderLayer::Opaque].push_back(leftCylRitem.get());
+		mRitemLayer[(int)RenderLayer::Opaque].push_back(rightCylRitem.get());
+		mRitemLayer[(int)RenderLayer::Opaque].push_back(leftSphereRitem.get());
+		mRitemLayer[(int)RenderLayer::Opaque].push_back(rightSphereRitem.get());
+
 		AllRItems.push_back(std::move(leftCylRitem));
 		AllRItems.push_back(std::move(rightCylRitem));
 		AllRItems.push_back(std::move(leftSphereRitem));
 		AllRItems.push_back(std::move(rightSphereRitem));
 	}
-
-	// All the render items are opaque.
-	for (auto& e : AllRItems)
-		OpaqueRitems.push_back(e.get());
 }
 
 
@@ -456,23 +612,23 @@ void RenderPass::BuildDescriptorHeaps()
 
 	UINT CbvSrvDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
 	//
-	// Create the SRV heap.
+	// 创建存储纹理贴图SRV描述符的SVR描述符堆
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 4;
-	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	srvHeapDesc.NumDescriptors = 5;	// 该描述符堆存储5个纹理描述符
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;	// 描述符类型为SRV/CBV/UAV
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(pD3DDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&SrvDescriptorHeap)));
 
 	//
-	// Fill out the heap with actual descriptors.
+	// 为每个纹理资源创建描述并填充到该描述符堆
 	//
 	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
-	auto bricksTex = Textures["bricksTex"]->Resource;
-	auto stoneTex = Textures["stoneTex"]->Resource;
-	auto tileTex = Textures["tileTex"]->Resource;
-	auto crateTex = Textures["crateTex"]->Resource;
+	auto bricksTex = Textures["bricksDiffuseMap"]->Resource;
+	auto tileTex = Textures["tileDiffuseMap"]->Resource;
+	auto whiteTex = Textures["defaultDiffuseMap"]->Resource;
+	auto skyTex = Textures["skyCubeMap"]->Resource;
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -486,13 +642,6 @@ void RenderPass::BuildDescriptorHeaps()
 	// next descriptor
 	hDescriptor.Offset(1, CbvSrvDescriptorSize);
 
-	srvDesc.Format = stoneTex->GetDesc().Format;
-	srvDesc.Texture2D.MipLevels = stoneTex->GetDesc().MipLevels;
-	pD3DDevice->CreateShaderResourceView(stoneTex.Get(), &srvDesc, hDescriptor);
-
-	// next descriptor
-	hDescriptor.Offset(1, CbvSrvDescriptorSize);
-
 	srvDesc.Format = tileTex->GetDesc().Format;
 	srvDesc.Texture2D.MipLevels = tileTex->GetDesc().MipLevels;
 	pD3DDevice->CreateShaderResourceView(tileTex.Get(), &srvDesc, hDescriptor);
@@ -500,9 +649,21 @@ void RenderPass::BuildDescriptorHeaps()
 	// next descriptor
 	hDescriptor.Offset(1, CbvSrvDescriptorSize);
 
-	srvDesc.Format = crateTex->GetDesc().Format;
-	srvDesc.Texture2D.MipLevels = crateTex->GetDesc().MipLevels;
-	pD3DDevice->CreateShaderResourceView(crateTex.Get(), &srvDesc, hDescriptor);
+	srvDesc.Format = whiteTex->GetDesc().Format;
+	srvDesc.Texture2D.MipLevels = whiteTex->GetDesc().MipLevels;
+	pD3DDevice->CreateShaderResourceView(whiteTex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	hDescriptor.Offset(1, CbvSrvDescriptorSize);
+
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;  // 指定环境贴图类型为立方体贴图
+	srvDesc.TextureCube.MostDetailedMip = 0;
+	srvDesc.TextureCube.MipLevels = skyTex->GetDesc().MipLevels;
+	srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+	srvDesc.Format = skyTex->GetDesc().Format;					// 指定纹理格式
+	pD3DDevice->CreateShaderResourceView(skyTex.Get(), &srvDesc, hDescriptor);	// 为环境贴图创建纹理描述符
+
+	mSkyTexHeapIndex = 3;			// 记录用于天空盒/天空球的环境贴图描述符在纹理描述符堆中的索引偏移值为3，为的是后续使用时可以快速找到环境贴图纹理描述符
 }
 
 
@@ -600,10 +761,10 @@ void RenderPass::BuildPSOs()
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaquePsoDesc;
 
+
 	//
 	// PSO for opaque objects.
 	//
-
 	ZeroMemory(&opaquePsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
 	opaquePsoDesc.InputLayout = { InputLayout.data(), (UINT)InputLayout.size() };
 	opaquePsoDesc.pRootSignature = RootSignature.Get();
@@ -619,7 +780,6 @@ void RenderPass::BuildPSOs()
 	};
 	bool enableMSAA = DXRenderDeviceManager::GetInstance().CheckMSAAState();
 	opaquePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	opaquePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
 	opaquePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	opaquePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	opaquePsoDesc.SampleMask = UINT_MAX;
@@ -630,6 +790,30 @@ void RenderPass::BuildPSOs()
 	opaquePsoDesc.SampleDesc.Quality = enableMSAA ? (DXRenderDeviceManager::GetInstance().GetMSAAQuality() - 1) : 0;
 	opaquePsoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	ThrowIfFailed(pD3DDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&PSOs["opaque"])));
+
+	//
+	// 天空球与普通物体对象的渲染状态对象基本相同因此先复用普通对象的渲染状态对象再做稍许调整
+	//
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC skyPsoDesc = opaquePsoDesc;
+
+	// 因为相机处于天空球内部因此对天空球的绘制不需要背面剔除
+	skyPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	// 绘制是的深度比较函数是小于等于是因为默认深度为1当距离较远是深度也近似为1而只用D3D12_COMPARISON_FUNC_LESS
+	// 则可能导致较远出的包围球像素不能通过深度比较测试
+	skyPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	skyPsoDesc.pRootSignature = RootSignature.Get();
+	skyPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(Shaders["skyVS"]->GetBufferPointer()),
+		Shaders["skyVS"]->GetBufferSize()
+	};
+	skyPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(Shaders["skyPS"]->GetBufferPointer()),
+		Shaders["skyPS"]->GetBufferSize()
+	};
+	ThrowIfFailed(pD3DDevice->CreateGraphicsPipelineState(&skyPsoDesc, IID_PPV_ARGS(&PSOs["sky"])));
 
 
 }
@@ -742,7 +926,7 @@ void RenderPass::TickMaterials(const SystemTimer& Timer)
 	}
 }
 
-void RenderPass::DrawRenderItems(const SystemTimer& Timer)
+void RenderPass::DrawRenderItems(const SystemTimer& Timer, RenderLayer LayerType)
 {
 	ID3D12GraphicsCommandList* pCommandList = DXRenderDeviceManager::GetInstance().GetCommandList();
 	FrameResource* CurrentFrameResource = DXRenderDeviceManager::GetInstance().GetCurrentFrameResource();
@@ -756,9 +940,9 @@ void RenderPass::DrawRenderItems(const SystemTimer& Timer)
 	auto objectCB = CurrentFrameResource->ObjectCB->Resource();
 
 	// For each render item...
-	for (size_t i = 0; i < OpaqueRitems.size(); ++i)
+	for (size_t i = 0; i < mRitemLayer[int(LayerType)].size(); ++i)
 	{
-		auto ri = OpaqueRitems[i];
+		auto ri = mRitemLayer[int(LayerType)][i];
 
 		D3D12_VERTEX_BUFFER_VIEW vertexBuffView = ri->Geo->VertexBufferView();
 		D3D12_INDEX_BUFFER_VIEW indexBuffView = ri->Geo->IndexBufferView();
@@ -767,7 +951,7 @@ void RenderPass::DrawRenderItems(const SystemTimer& Timer)
 		pCommandList->IASetPrimitiveTopology(ri->PrimitiveType);
 
 		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
-		// 仅设置对象自身数据属性
+
 		pCommandList->SetGraphicsRootConstantBufferView(0, objCBAddress);
 
 		pCommandList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);

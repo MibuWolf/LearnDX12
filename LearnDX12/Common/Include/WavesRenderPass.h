@@ -3,11 +3,7 @@
 #include "Base/RenderPass.h"
 
 
-enum class RenderLayer : int
-{
-	Opaque = 0,
-	Count
-};
+
 
 class WavesRenderPass : public RenderPass
 {
@@ -37,7 +33,7 @@ protected:
 
 	void		UpdateWaves(const SystemTimer& Timer);
 
-	void		DrawRenderItems(const SystemTimer& Timer) override;
+	void		DrawRenderItems(const SystemTimer& Timer, RenderLayer LayerType) override;
 
 	float GetHillsHeight(float x, float z)const;
 	XMFLOAT3 GetHillsNormal(float x, float z)const;

@@ -67,6 +67,7 @@ struct Vertex
 {
     XMFLOAT3 Pos;
     DirectX::XMFLOAT3 Normal;
+    DirectX::XMFLOAT2 TexC;
 };
 
 
