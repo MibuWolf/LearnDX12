@@ -24,7 +24,6 @@ void RenderPass::Initialize()
 	BuildShadersAndInputLayout();
 	// 构建基本静态模型网格信息(将所有静态模型的顶点放到一个顶点缓冲区，索引也整合到一个索引缓冲区)
 	BuildShapeGeometry();
-	BuildSkullGeometry();
 	// 初始化材质信息
 	BuildMaterials();
 	// 为每个网格模型的渲染实例记录渲染项信息
@@ -101,17 +100,23 @@ void RenderPass::LoadTextures()
 	std::vector<std::string> texNames =
 	{
 		"bricksDiffuseMap",
+		"bricksNormalMap",		// 砖块法线贴图
 		"tileDiffuseMap",
+		"tileNormalMap",		// tile法线贴图
 		"defaultDiffuseMap",
-		"skyCubeMap"			// 天空盒的环境贴图
+		"defaultNormalMap",	 // 默认法线贴图
+		"skyCubeMap"		// 天空盒的环境贴图
 	};
 
 	std::vector<std::wstring> texFilenames =
 	{
 		L"Textures/bricks2.dds",
+		L"Textures/bricks2_nmap.dds",
 		L"Textures/tile.dds",
+		L"Textures/tile_nmap.dds",
 		L"Textures/white1x1.dds",
-		L"Textures/grasscube1024.dds"			// 像加载普通纹理一样加载环境立方体贴图贴图
+		L"Textures/default_nmap.dds",
+		L"Textures/snowcube1024.dds"		// 像加载普通纹理一样加载环境立方体贴图贴图
 	};
 
 	for (int i = 0; i < (int)texNames.size(); ++i)
@@ -136,20 +141,20 @@ void RenderPass::BuildRootSignature()
 		return;
 
 	CD3DX12_DESCRIPTOR_RANGE texTable0;
-	texTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);	// 纹理描述符表 1个纹理描述符 对应0号寄存器 0号空间
+	texTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
 
 	CD3DX12_DESCRIPTOR_RANGE texTable1;
-	texTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 1, 0);	// 纹理描述符表 5个纹理描述符 对应1号寄存器 0号空间
+	texTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 10, 1, 0);
 
-	// 五个根参数
+	// Root parameter can be a table, root descriptor or root constants.
 	CD3DX12_ROOT_PARAMETER slotRootParameter[5];
 
-	// 从更新频率高到低
-	slotRootParameter[0].InitAsConstantBufferView(0);	// 对应每个渲染对象的常量缓冲区数据映射到着色器中的b0寄存器
-	slotRootParameter[1].InitAsConstantBufferView(1);	// 对应每个渲染Pass的常量缓冲区数据映射到着色器中的b1寄存器
-	slotRootParameter[2].InitAsShaderResourceView(0, 1); // 对应材质数组的结构化缓冲区数据映射到着色器中t0寄存器的space1空间
-	slotRootParameter[3].InitAsDescriptorTable(1, &texTable0, D3D12_SHADER_VISIBILITY_PIXEL);		// 根描述符表对应的是放置在t0的环境贴图(立方体贴图)
-	slotRootParameter[4].InitAsDescriptorTable(1, &texTable1, D3D12_SHADER_VISIBILITY_PIXEL);		// 描述符表对对应的是放置在t1的普通纹理贴图数组
+	// Perfomance TIP: Order from most frequent to least frequent.
+	slotRootParameter[0].InitAsConstantBufferView(0);
+	slotRootParameter[1].InitAsConstantBufferView(1);
+	slotRootParameter[2].InitAsShaderResourceView(0, 1);
+	slotRootParameter[3].InitAsDescriptorTable(1, &texTable0, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParameter[4].InitAsDescriptorTable(1, &texTable1, D3D12_SHADER_VISIBILITY_PIXEL);
 
 
 	auto staticSamplers = GetStaticSamplers();
@@ -190,7 +195,7 @@ void RenderPass::BuildShadersAndInputLayout()
 	Shaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
 
-	Shaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");  // 对天空球的绘制与普通模型不同，因此需要对其做区分
+	Shaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", "ps_5_1");
 
 	InputLayout =
@@ -198,6 +203,7 @@ void RenderPass::BuildShadersAndInputLayout()
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
 }
 
@@ -217,12 +223,18 @@ void RenderPass::BuildShapeGeometry()
 	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
 	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
 
-	// 创建顶点和索引缓冲取并将创建出来的这些模型数据整理后存入顶点/索引缓冲区
+	//
+	// We are concatenating all the geometry into one big vertex/index buffer.  So
+	// define the regions in the buffer each submesh covers.
+	//
+
+	// Cache the vertex offsets to each object in the concatenated vertex buffer.
 	UINT boxVertexOffset = 0;
 	UINT gridVertexOffset = (UINT)box.Vertices.size();
 	UINT sphereVertexOffset = gridVertexOffset + (UINT)grid.Vertices.size();
 	UINT cylinderVertexOffset = sphereVertexOffset + (UINT)sphere.Vertices.size();
 
+	// Cache the starting index for each object in the concatenated index buffer.
 	UINT boxIndexOffset = 0;
 	UINT gridIndexOffset = (UINT)box.Indices32.size();
 	UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
@@ -267,6 +279,7 @@ void RenderPass::BuildShapeGeometry()
 		vertices[k].Pos = box.Vertices[i].Position;
 		vertices[k].Normal = box.Vertices[i].Normal;
 		vertices[k].TexC = box.Vertices[i].TexC;
+		vertices[k].TangentU = box.Vertices[i].TangentU;  // 从模型数据中导出切线数据为构建切先空间提供T数据
 	}
 
 	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
@@ -274,6 +287,7 @@ void RenderPass::BuildShapeGeometry()
 		vertices[k].Pos = grid.Vertices[i].Position;
 		vertices[k].Normal = grid.Vertices[i].Normal;
 		vertices[k].TexC = grid.Vertices[i].TexC;
+		vertices[k].TangentU = grid.Vertices[i].TangentU;
 	}
 
 	for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
@@ -281,6 +295,7 @@ void RenderPass::BuildShapeGeometry()
 		vertices[k].Pos = sphere.Vertices[i].Position;
 		vertices[k].Normal = sphere.Vertices[i].Normal;
 		vertices[k].TexC = sphere.Vertices[i].TexC;
+		vertices[k].TangentU = sphere.Vertices[i].TangentU;
 	}
 
 	for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
@@ -288,6 +303,7 @@ void RenderPass::BuildShapeGeometry()
 		vertices[k].Pos = cylinder.Vertices[i].Position;
 		vertices[k].Normal = cylinder.Vertices[i].Normal;
 		vertices[k].TexC = cylinder.Vertices[i].TexC;
+		vertices[k].TangentU = cylinder.Vertices[i].TangentU;
 	}
 
 	std::vector<std::uint16_t> indices;
@@ -433,46 +449,41 @@ void RenderPass::BuildMaterials()
 	bricks0->Name = "bricks0";
 	bricks0->MatCBIndex = 0;
 	bricks0->DiffuseSrvHeapIndex = 0;
+	bricks0->NormalSrvHeapIndex = 1;    // 在材质中启用并记录法线贴图描述符在纹理描述符堆中的索引
 	bricks0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 	bricks0->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
 	bricks0->Roughness = 0.3f;
 
 	auto tile0 = std::make_unique<Material>();
 	tile0->Name = "tile0";
-	tile0->MatCBIndex = 1;
-	tile0->DiffuseSrvHeapIndex = 1;
+	tile0->MatCBIndex = 2;
+	tile0->DiffuseSrvHeapIndex = 2;
+	tile0->NormalSrvHeapIndex = 3;
 	tile0->DiffuseAlbedo = XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f);
 	tile0->FresnelR0 = XMFLOAT3(0.2f, 0.2f, 0.2f);
 	tile0->Roughness = 0.1f;
 
 	auto mirror0 = std::make_unique<Material>();
 	mirror0->Name = "mirror0";
-	mirror0->MatCBIndex = 2;
-	mirror0->DiffuseSrvHeapIndex = 2;
-	mirror0->DiffuseAlbedo = XMFLOAT4(0.0f, 0.0f, 0.1f, 1.0f);
+	mirror0->MatCBIndex = 3;
+	mirror0->DiffuseSrvHeapIndex = 4;
+	mirror0->NormalSrvHeapIndex = 5;
+	mirror0->DiffuseAlbedo = XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
 	mirror0->FresnelR0 = XMFLOAT3(0.98f, 0.97f, 0.95f);
 	mirror0->Roughness = 0.1f;
 
-	auto skullMat = std::make_unique<Material>();
-	skullMat->Name = "skullMat";
-	skullMat->MatCBIndex = 3;
-	skullMat->DiffuseSrvHeapIndex = 2;
-	skullMat->DiffuseAlbedo = XMFLOAT4(0.8f, 0.8f, 0.8f, 1.0f);
-	skullMat->FresnelR0 = XMFLOAT3(0.2f, 0.2f, 0.2f);
-	skullMat->Roughness = 0.2f;
-
 	auto sky = std::make_unique<Material>();
-	sky->Name = "sky";									
-	sky->MatCBIndex = 4;						// 天空球的材质数据在材质缓冲区中的索引
-	sky->DiffuseSrvHeapIndex = 3;				// 天空球使用的纹理描述符在纹理描述符堆中的索引
-	sky->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);	// 漫反射反照率
-	sky->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);	// 0°时的反照率
-	sky->Roughness = 1.0f;			// 粗糙度
+	sky->Name = "sky";
+	sky->MatCBIndex = 4;
+	sky->DiffuseSrvHeapIndex = 6;
+	sky->NormalSrvHeapIndex = 7;
+	sky->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	sky->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
+	sky->Roughness = 1.0f;
 
 	Materials["bricks0"] = std::move(bricks0);
 	Materials["tile0"] = std::move(tile0);
 	Materials["mirror0"] = std::move(mirror0);
-	Materials["skullMat"] = std::move(skullMat);
 	Materials["sky"] = std::move(sky);
 }
 
@@ -480,22 +491,22 @@ void RenderPass::BuildMaterials()
 void RenderPass::BuildRenderItems()
 {
 	auto skyRitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&skyRitem->World, XMMatrixScaling(5000.0f, 5000.0f, 5000.0f));	// 将球体缩放5000倍作为天空球
+	XMStoreFloat4x4(&skyRitem->World, XMMatrixScaling(5000.0f, 5000.0f, 5000.0f));
 	skyRitem->TexTransform = MathHelper::Identity4x4();
 	skyRitem->ObjCBIndex = 0;
-	skyRitem->Mat = Materials["sky"].get();	// 记录天空球使用的材质信息
-	skyRitem->Geo = Geometries["shapeGeo"].get();	// 模型信息
-	skyRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST; // 绘制的图元类型
-	skyRitem->IndexCount = skyRitem->Geo->DrawArgs["sphere"].IndexCount;	// 在所有模型中的索引
-	skyRitem->StartIndexLocation = skyRitem->Geo->DrawArgs["sphere"].StartIndexLocation;	// 索引缓冲区开始位置
-	skyRitem->BaseVertexLocation = skyRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;	// 顶点缓冲区开始位置
+	skyRitem->Mat = Materials["sky"].get();
+	skyRitem->Geo = Geometries["shapeGeo"].get();
+	skyRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	skyRitem->IndexCount = skyRitem->Geo->DrawArgs["sphere"].IndexCount;
+	skyRitem->StartIndexLocation = skyRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	skyRitem->BaseVertexLocation = skyRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 
 	mRitemLayer[(int)RenderLayer::Sky].push_back(skyRitem.get());
 	AllRItems.push_back(std::move(skyRitem));
 
 	auto boxRitem = std::make_unique<RenderItem>();
 	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 1.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f));
-	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
+	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1.0f, 0.5f, 1.0f));
 	boxRitem->ObjCBIndex = 1;
 	boxRitem->Mat = Materials["bricks0"].get();
 	boxRitem->Geo = Geometries["shapeGeo"].get();
@@ -507,19 +518,19 @@ void RenderPass::BuildRenderItems()
 	mRitemLayer[(int)RenderLayer::Opaque].push_back(boxRitem.get());
 	AllRItems.push_back(std::move(boxRitem));
 
-	auto skullRitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&skullRitem->World, XMMatrixScaling(0.4f, 0.4f, 0.4f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f));
-	skullRitem->TexTransform = MathHelper::Identity4x4();
-	skullRitem->ObjCBIndex = 2;
-	skullRitem->Mat = Materials["skullMat"].get();
-	skullRitem->Geo = Geometries["skullGeo"].get();
-	skullRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	skullRitem->IndexCount = skullRitem->Geo->DrawArgs["skull"].IndexCount;
-	skullRitem->StartIndexLocation = skullRitem->Geo->DrawArgs["skull"].StartIndexLocation;
-	skullRitem->BaseVertexLocation = skullRitem->Geo->DrawArgs["skull"].BaseVertexLocation;
+	auto globeRitem = std::make_unique<RenderItem>();
+	XMStoreFloat4x4(&globeRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 2.0f, 0.0f));
+	XMStoreFloat4x4(&globeRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
+	globeRitem->ObjCBIndex = 2;
+	globeRitem->Mat = Materials["mirror0"].get();
+	globeRitem->Geo = Geometries["shapeGeo"].get();
+	globeRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	globeRitem->IndexCount = globeRitem->Geo->DrawArgs["sphere"].IndexCount;
+	globeRitem->StartIndexLocation = globeRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	globeRitem->BaseVertexLocation = globeRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 
-	mRitemLayer[(int)RenderLayer::Opaque].push_back(skullRitem.get());
-	AllRItems.push_back(std::move(skullRitem));
+	mRitemLayer[(int)RenderLayer::Opaque].push_back(globeRitem.get());
+	AllRItems.push_back(std::move(globeRitem));
 
 	auto gridRitem = std::make_unique<RenderItem>();
 	gridRitem->World = MathHelper::Identity4x4();
@@ -612,58 +623,55 @@ void RenderPass::BuildDescriptorHeaps()
 
 	UINT CbvSrvDescriptorSize = DXRenderDeviceManager::GetInstance().GetConstantDescriptorSize();
 	//
-	// 创建存储纹理贴图SRV描述符的SVR描述符堆
+	// Create the SRV heap.
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 5;	// 该描述符堆存储5个纹理描述符
-	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;	// 描述符类型为SRV/CBV/UAV
+	srvHeapDesc.NumDescriptors = 10;
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(pD3DDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&SrvDescriptorHeap)));
 
 	//
-	// 为每个纹理资源创建描述并填充到该描述符堆
+	// Fill out the heap with actual descriptors.
 	//
 	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
-	auto bricksTex = Textures["bricksDiffuseMap"]->Resource;
-	auto tileTex = Textures["tileDiffuseMap"]->Resource;
-	auto whiteTex = Textures["defaultDiffuseMap"]->Resource;
-	auto skyTex = Textures["skyCubeMap"]->Resource;
+	std::vector<ComPtr<ID3D12Resource>> tex2DList =
+	{
+		Textures["bricksDiffuseMap"]->Resource,
+		Textures["bricksNormalMap"]->Resource,
+		Textures["tileDiffuseMap"]->Resource,
+		Textures["tileNormalMap"]->Resource,
+		Textures["defaultDiffuseMap"]->Resource,
+		Textures["defaultNormalMap"]->Resource
+	};
+
+	auto skyCubeMap = Textures["skyCubeMap"]->Resource;
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.Format = bricksTex->GetDesc().Format;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MostDetailedMip = 0;
-	srvDesc.Texture2D.MipLevels = bricksTex->GetDesc().MipLevels;
 	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
-	pD3DDevice->CreateShaderResourceView(bricksTex.Get(), &srvDesc, hDescriptor);
 
-	// next descriptor
-	hDescriptor.Offset(1, CbvSrvDescriptorSize);
+	for (UINT i = 0; i < (UINT)tex2DList.size(); ++i)
+	{
+		srvDesc.Format = tex2DList[i]->GetDesc().Format;
+		srvDesc.Texture2D.MipLevels = tex2DList[i]->GetDesc().MipLevels;
+		pD3DDevice->CreateShaderResourceView(tex2DList[i].Get(), &srvDesc, hDescriptor);
 
-	srvDesc.Format = tileTex->GetDesc().Format;
-	srvDesc.Texture2D.MipLevels = tileTex->GetDesc().MipLevels;
-	pD3DDevice->CreateShaderResourceView(tileTex.Get(), &srvDesc, hDescriptor);
+		// next descriptor
+		hDescriptor.Offset(1, CbvSrvDescriptorSize);
+	}
 
-	// next descriptor
-	hDescriptor.Offset(1, CbvSrvDescriptorSize);
-
-	srvDesc.Format = whiteTex->GetDesc().Format;
-	srvDesc.Texture2D.MipLevels = whiteTex->GetDesc().MipLevels;
-	pD3DDevice->CreateShaderResourceView(whiteTex.Get(), &srvDesc, hDescriptor);
-
-	// next descriptor
-	hDescriptor.Offset(1, CbvSrvDescriptorSize);
-
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;  // 指定环境贴图类型为立方体贴图
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
 	srvDesc.TextureCube.MostDetailedMip = 0;
-	srvDesc.TextureCube.MipLevels = skyTex->GetDesc().MipLevels;
+	srvDesc.TextureCube.MipLevels = skyCubeMap->GetDesc().MipLevels;
 	srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
-	srvDesc.Format = skyTex->GetDesc().Format;					// 指定纹理格式
-	pD3DDevice->CreateShaderResourceView(skyTex.Get(), &srvDesc, hDescriptor);	// 为环境贴图创建纹理描述符
+	srvDesc.Format = skyCubeMap->GetDesc().Format;
+	pD3DDevice->CreateShaderResourceView(skyCubeMap.Get(), &srvDesc, hDescriptor);
 
-	mSkyTexHeapIndex = 3;			// 记录用于天空盒/天空球的环境贴图描述符在纹理描述符堆中的索引偏移值为3，为的是后续使用时可以快速找到环境贴图纹理描述符
+	mSkyTexHeapIndex = (UINT)tex2DList.size();
 }
 
 
@@ -917,6 +925,7 @@ void RenderPass::TickMaterials(const SystemTimer& Timer)
 			matData.Roughness = mat->Roughness;
 			XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
 			matData.DiffuseMapIndex = mat->DiffuseSrvHeapIndex;
+			matData.NormalMapIndex = mat->NormalSrvHeapIndex;
 
 			currMatCB->CopyData(mat->MatCBIndex, matData);
 
