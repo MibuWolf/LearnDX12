@@ -1,11 +1,14 @@
-#ifndef SYSTEMTIMER_H
-#define SYSTEMTIMER_H
+//***************************************************************************************
+// GameTimer.h by Frank Luna (C) 2011 All Rights Reserved.
+//***************************************************************************************
 
-class SystemTimer
+#ifndef GAMETIMER_H
+#define GAMETIMER_H
+
+class GameTimer
 {
 public:
-
-	SystemTimer();
+	GameTimer();
 
 	float TotalTime()const; // in seconds
 	float DeltaTime()const; // in seconds
@@ -16,7 +19,6 @@ public:
 	void Tick();  // Call every frame.
 
 private:
-
 	double mSecondsPerCount;
 	double mDeltaTime;
 

@@ -31,10 +31,11 @@ struct MaterialData
 };
 
 TextureCube gCubeMap : register(t0);
+Texture2D gShadowMap : register(t1);
 
 // An array of textures, which is only supported in shader model 5.1+.  Unlike Texture2DArray, the textures
 // in this array can be different sizes and formats, making it more flexible than texture arrays.
-Texture2D gTextureMaps[10] : register(t1);
+Texture2D gTextureMaps[10] : register(t2);
 
 // Put in space1, so the texture array does not overlap with these resources.  
 // The texture array will occupy registers t0, t1, ..., t3 in space0. 
@@ -47,6 +48,7 @@ SamplerState gsamLinearWrap       : register(s2);
 SamplerState gsamLinearClamp      : register(s3);
 SamplerState gsamAnisotropicWrap  : register(s4);
 SamplerState gsamAnisotropicClamp : register(s5);
+SamplerComparisonState gsamShadow : register(s6);
 
 // Constant data that varies per frame.
 cbuffer cbPerObject : register(b0)
@@ -59,7 +61,6 @@ cbuffer cbPerObject : register(b0)
 	uint gObjPad2;
 };
 
-// Constant data that varies per material.
 cbuffer cbPass : register(b1)
 {
     float4x4 gView;
@@ -68,6 +69,7 @@ cbuffer cbPass : register(b1)
     float4x4 gInvProj;
     float4x4 gViewProj;
     float4x4 gInvViewProj;
+    float4x4 gShadowTransform;
     float3 gEyePosW;
     float cbPerObjectPad1;
     float2 gRenderTargetSize;
@@ -90,23 +92,60 @@ cbuffer cbPass : register(b1)
 //---------------------------------------------------------------------------------------
 float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, float3 tangentW)
 {
-	// ¶ÔÓÚ²ÉÑù³öµÄ·¨ÏßÌùÍ¼ÑÕÉ«Öµ·¶Î§ÊÇ[0,1] ĞèÒªÏÈ½«Æä×ª»¯µ½ [-1,1].
+	// Uncompress each component from [0,1] to [-1,1].
 	float3 normalT = 2.0f*normalMapSample - 1.0f;
 
-	// unitNormalWÎª¶¥µã¹âÕ¤»¯ºó´Ë´¦µÄ·¨ÏòÁ¿
+	// Build orthonormal basis.
 	float3 N = unitNormalW;
-	float3 T = normalize(tangentW - dot(tangentW, N)*N); // ÓÉÓÚtangentWÓëunitNormalW¶¼ÊÇ¹âÕ¤»¯À´µÄÒò´ËÆä²»Ò»¶¨·ûºÏÕı½»»ù
-                                                          // tangentW - dot(tangentW, N)*N ÊÇÎªÁËÈ¥³ıtangentWÔÚ·¨Ïß·½ÏòµÄÍ¶Ó°
-                                                          // ½ö±£ÁôÓë·¨Ïß´¹Ö±²¿·ÖµÄ·ÖÁ¿±£Ö¤N T·ûºÏÕı½»»ù
+	float3 T = normalize(tangentW - dot(tangentW, N)*N);
 	float3 B = cross(N, T);
 
-	float3x3 TBN = float3x3(T, B, N);           // ÒòÎªN T¶¼ÊÇÒÑ¾­¾­¹ıÊÀ½ç¿Õ¼ä±ä»¯µÄÏòÁ¿Òò´Ë T, B, N×é³ÉµÄ¾ØÕó¾ÍÊÇµ½ÊÀ½ç¿Õ¼äµÄ¾ØÕó
-                                                // ÁíÍâfloat3x3ÊÇ°´ĞĞ´æ´¢µÄÒ²¾ÍÊÇËµµÚÒ»ĞĞÊÇ(Tx,Ty,Tz)Ïàµ±ÓÚÒÑ¾­½«ÁĞ¾ØÕó×ª»¯ÎªÁËĞĞ¾ØÕó
-                                                // Ò²¾ÍÊÇËµÒÑ¾­¶ÔT B NÕı½»»ùµÄ¾ØÕó½øĞĞÁË×ªÖÃ(Ò²¾ÍÏàµ±ÓÚÊÇÄæ¾ØÕó)
+	float3x3 TBN = float3x3(T, B, N);
 
 	// Transform from tangent space to world space.
 	float3 bumpedNormalW = mul(normalT, TBN);
 
 	return bumpedNormalW;
+}
+
+//---------------------------------------------------------------------------------------
+// PCF for shadow mapping. ç™¾åˆ†æ¯”æ¸è¿›è¿‡æ»¤æ ¸ä¸º3çš„é˜´å½±å› å­è®¡ç®—æ–¹å¼
+//---------------------------------------------------------------------------------------
+
+float CalcShadowFactor(float4 shadowPosH)
+{
+    // å°†MVPTè½¬æ¢åçš„åæ ‡é™¤ä»¥wä»¥åˆ‡æ¢åˆ°NDCç©ºé—´
+    shadowPosH.xyz /= shadowPosH.w;
+
+    // NDCç©ºé—´çš„Zå€¼ä¹Ÿå°±æ˜¯æ·±åº¦å€¼
+    float depth = shadowPosH.z;
+
+    // è·å–å½“å‰ShadowMapçº¹ç†çš„å®½é«˜
+    uint width, height, numMips;
+    gShadowMap.GetDimensions(0, width, height, numMips);
+
+    // æ¯ä¸ªåƒç´ å¯¹åº”çš„uvåæ ‡å€¼
+    float dx = 1.0f / (float)width;
+
+    // è®¡ç®—å½“å‰çº¹ç†å‘¨è¾¹9ä¸ªçº¹ç´ åç§»å€¼
+    float percentLit = 0.0f;
+    const float2 offsets[9] =
+    {
+        float2(-dx,  -dx), float2(0.0f,  -dx), float2(dx,  -dx),
+        float2(-dx, 0.0f), float2(0.0f, 0.0f), float2(dx, 0.0f),
+        float2(-dx,  +dx), float2(0.0f,  +dx), float2(dx,  +dx)
+    };
+
+    [unroll]
+    for(int i = 0; i < 9; ++i)
+    {
+        // gShadowMap.SampleCmpLevelZeroä¸ºæ¯”è¾ƒé‡‡æ ·å™¨(ä»…åœ¨mipmap0çº§é‡‡æ ·æ¯”è¾ƒ)ï¼Œå…¶ä¼šåœ¨ç¡¬ä»¶å±‚å°†shadowPosH.xy + offsets[i]å¤„æ·±åº¦
+        // ä¸depthè¿›è¡Œæ¯”è¾ƒè¿”å›0/1
+        // gShadowMapé‡‡æ ·å™¨åº”ä½¿ç”¨D3D12_FILTER_MIN_MAG_MIP_POINTä¹Ÿå°±æ˜¯å¯¹(u,v)é‡‡æ ·ä¸è¿›è¡Œçº¿æ€§/åŒçº¿æ€§è¿‡æ»¤
+        percentLit += gShadowMap.SampleCmpLevelZero(gsamShadow,
+            shadowPosH.xy + offsets[i], depth).r;
+    }
+    // è®¡ç®—å‡ºé˜´å½±å› å­
+    return percentLit / 9.0f;
 }
 

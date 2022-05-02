@@ -1,20 +1,22 @@
-﻿#include <windows.h>
-#include "SystemTimer.h"
+//***************************************************************************************
+// GameTimer.cpp by Frank Luna (C) 2011 All Rights Reserved.
+//***************************************************************************************
 
+#include <windows.h>
+#include "GameTimer.h"
 
-
-SystemTimer::SystemTimer()
-	: mSecondsPerCount(0.0), mDeltaTime(-1.0), mBaseTime(0),
-	mPausedTime(0), mPrevTime(0), mCurrTime(0), mStopped(false)
+GameTimer::GameTimer()
+: mSecondsPerCount(0.0), mDeltaTime(-1.0), mBaseTime(0), 
+  mPausedTime(0), mPrevTime(0), mCurrTime(0), mStopped(false)
 {
-	// 记录高频检测的频率
 	__int64 countsPerSec;
-	QueryPerformanceFrequency((LARGE_INTEGER*)&countsPerSec);	// 返回高频检测1s检测的次数countsPerSec
-	mSecondsPerCount = 1.0 / (double)countsPerSec;	// 记录检测频率用于后续计算帧间隔时间
+	QueryPerformanceFrequency((LARGE_INTEGER*)&countsPerSec);
+	mSecondsPerCount = 1.0 / (double)countsPerSec;
 }
 
-// 统计自Reset开始到现在的执行时间(不包括Stop期间的时间)
-float SystemTimer::TotalTime()const
+// Returns the total time elapsed since Reset() was called, NOT counting any
+// time when the clock is stopped.
+float GameTimer::TotalTime()const
 {
 	// If we are stopped, do not count the time that has passed since we stopped.
 	// Moreover, if we previously already had a pause, the distance 
@@ -25,9 +27,9 @@ float SystemTimer::TotalTime()const
 	// ----*---------------*-----------------*------------*------------*------> time
 	//  mBaseTime       mStopTime        startTime     mStopTime    mCurrTime
 
-	if (mStopped)
+	if( mStopped )
 	{
-		return (float)(((mStopTime - mPausedTime) - mBaseTime) * mSecondsPerCount);
+		return (float)(((mStopTime - mPausedTime)-mBaseTime)*mSecondsPerCount);
 	}
 
 	// The distance mCurrTime - mBaseTime includes paused time,
@@ -39,19 +41,19 @@ float SystemTimer::TotalTime()const
 	//                     |<--paused time-->|
 	// ----*---------------*-----------------*------------*------> time
 	//  mBaseTime       mStopTime        startTime     mCurrTime
-
+	
 	else
 	{
-		return (float)(((mCurrTime - mPausedTime) - mBaseTime) * mSecondsPerCount);
+		return (float)(((mCurrTime-mPausedTime)-mBaseTime)*mSecondsPerCount);
 	}
 }
 
-float SystemTimer::DeltaTime()const
+float GameTimer::DeltaTime()const
 {
 	return (float)mDeltaTime;
 }
 
-void SystemTimer::Reset()
+void GameTimer::Reset()
 {
 	__int64 currTime;
 	QueryPerformanceCounter((LARGE_INTEGER*)&currTime);
@@ -59,10 +61,10 @@ void SystemTimer::Reset()
 	mBaseTime = currTime;
 	mPrevTime = currTime;
 	mStopTime = 0;
-	mStopped = false;
+	mStopped  = false;
 }
 
-void SystemTimer::Start()
+void GameTimer::Start()
 {
 	__int64 startTime;
 	QueryPerformanceCounter((LARGE_INTEGER*)&startTime);
@@ -74,31 +76,31 @@ void SystemTimer::Start()
 	// ----*---------------*-----------------*------------> time
 	//  mBaseTime       mStopTime        startTime     
 
-	if (mStopped)
+	if( mStopped )
 	{
-		mPausedTime += (startTime - mStopTime);
+		mPausedTime += (startTime - mStopTime);	
 
 		mPrevTime = startTime;
 		mStopTime = 0;
-		mStopped = false;
+		mStopped  = false;
 	}
 }
 
-void SystemTimer::Stop()
+void GameTimer::Stop()
 {
-	if (!mStopped)
+	if( !mStopped )
 	{
 		__int64 currTime;
 		QueryPerformanceCounter((LARGE_INTEGER*)&currTime);
 
 		mStopTime = currTime;
-		mStopped = true;
+		mStopped  = true;
 	}
 }
 
-void SystemTimer::Tick()
+void GameTimer::Tick()
 {
-	if (mStopped)
+	if( mStopped )
 	{
 		mDeltaTime = 0.0;
 		return;
@@ -108,17 +110,18 @@ void SystemTimer::Tick()
 	QueryPerformanceCounter((LARGE_INTEGER*)&currTime);
 	mCurrTime = currTime;
 
-	// 当前帧的高频检测次数减去上一帧时高频检测次数乘以高频检测频率可以计算出两帧的时间间隔
-	mDeltaTime = (mCurrTime - mPrevTime) * mSecondsPerCount;
+	// Time difference between this frame and the previous.
+	mDeltaTime = (mCurrTime - mPrevTime)*mSecondsPerCount;
 
-	// 更新上一帧高频检测次数
+	// Prepare for next frame.
 	mPrevTime = mCurrTime;
 
 	// Force nonnegative.  The DXSDK's CDXUTTimer mentions that if the 
 	// processor goes into a power save mode or we get shuffled to another
 	// processor, then mDeltaTime can be negative.
-	if (mDeltaTime < 0.0)
+	if(mDeltaTime < 0.0)
 	{
 		mDeltaTime = 0.0;
 	}
 }
+
