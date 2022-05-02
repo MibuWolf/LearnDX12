@@ -23,36 +23,31 @@ VertexOut VS(VertexIn vin)
 
 	MaterialData matData = gMaterialData[gMaterialIndex];
 	
-    // Transform to world space.
+    // 将顶点经过灯光视角下的MVP变换转换到灯光视角的投影空间
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
-
-    // Transform to homogeneous clip space.
     vout.PosH = mul(posW, gViewProj);
 	
-	// Output vertex attributes for interpolation across triangle.
+	// 对纹理坐标进行变换
 	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
 	vout.TexC = mul(texC, matData.MatTransform).xy;
 	
     return vout;
 }
 
-// This is only used for alpha cut out geometry, so that shadows 
-// show up correctly.  Geometry that does not need to sample a
-// texture can use a NULL pixel shader for depth pass.
+// 由于ShadowMap仅仅需要的是深度信息且并未设置任何RenderTarget，因此PS并不需要输出任何颜色值信息
 void PS(VertexOut pin) 
 {
-	// Fetch the material data.
+	// 其实这些计算也都可以省略，因为本质上ShadowMap只需要深度信息，根本无需任何颜色值数据计算。
+	// 获取材质信息
 	MaterialData matData = gMaterialData[gMaterialIndex];
 	float4 diffuseAlbedo = matData.DiffuseAlbedo;
     uint diffuseMapIndex = matData.DiffuseMapIndex;
 	
-	// Dynamically look up the texture in the array.
+	// 根据纹理进行采样
 	diffuseAlbedo *= gTextureMaps[diffuseMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
 
 #ifdef ALPHA_TEST
-    // Discard pixel if texture alpha < 0.1.  We do this test as soon 
-    // as possible in the shader so that we can potentially exit the
-    // shader early, thereby skipping the rest of the shader code.
+    // AlphaTest 对alpha值小于0.1的像素进行clip
     clip(diffuseAlbedo.a - 0.1f);
 #endif
 }

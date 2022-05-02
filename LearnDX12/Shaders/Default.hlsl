@@ -40,26 +40,24 @@ VertexOut VS(VertexIn vin)
 {
 	VertexOut vout = (VertexOut)0.0f;
 
-	// Fetch the material data.
+	// 获取材质信息
 	MaterialData matData = gMaterialData[gMaterialIndex];
 	
-    // Transform to world space.
+    // 将顶点位置，法线，切线信息转换到世界空间
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
     vout.PosW = posW.xyz;
 
-    // Assumes nonuniform scaling; otherwise, need to use inverse-transpose of world matrix.
     vout.NormalW = mul(vin.NormalL, (float3x3)gWorld);
-	
 	vout.TangentW = mul(vin.TangentU, (float3x3)gWorld);
 
-    // Transform to homogeneous clip space.
+    // 将顶点转换到裁剪空间(MVP)
     vout.PosH = mul(posW, gViewProj);
 	
-	// Output vertex attributes for interpolation across triangle.
+	// 计算纹理坐标
 	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
 	vout.TexC = mul(texC, matData.MatTransform).xy;
 
-    // Generate projective tex-coords to project shadow map onto scene.
+    // 将顶点转换到灯光视角下的MVPT空间
     vout.ShadowPosH = mul(posW, gShadowTransform);
 	
     return vout;
@@ -67,7 +65,7 @@ VertexOut VS(VertexIn vin)
 
 float4 PS(VertexOut pin) : SV_Target
 {
-	// Fetch the material data.
+	// 采集材质参数数据
 	MaterialData matData = gMaterialData[gMaterialIndex];
 	float4 diffuseAlbedo = matData.DiffuseAlbedo;
 	float3 fresnelR0 = matData.FresnelR0;
@@ -75,19 +73,17 @@ float4 PS(VertexOut pin) : SV_Target
 	uint diffuseMapIndex = matData.DiffuseMapIndex;
 	uint normalMapIndex = matData.NormalMapIndex;
 	
-    // Dynamically look up the texture in the array.
+    // 从纹理数组中动态采集漫反射纹理
     diffuseAlbedo *= gTextureMaps[diffuseMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
 
 #ifdef ALPHA_TEST
-    // Discard pixel if texture alpha < 0.1.  We do this test as soon 
-    // as possible in the shader so that we can potentially exit the
-    // shader early, thereby skipping the rest of the shader code.
+    // Alpha测试
     clip(diffuseAlbedo.a - 0.1f);
 #endif
 
-	// Interpolating normal can unnormalize it, so renormalize it.
+	// 归一化法线(经过光栅化之后的法线需要归一化)
     pin.NormalW = normalize(pin.NormalW);
-	
+	// 对法线贴图采样并将其转换到世界空间
 	float4 normalMapSample = gTextureMaps[normalMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
 	float3 bumpedNormalW = NormalSampleToWorldSpace(normalMapSample.rgb, pin.NormalW, pin.TangentW);
 

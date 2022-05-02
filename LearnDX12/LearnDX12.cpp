@@ -283,7 +283,7 @@ void ShadowMapApp::Update(const GameTimer& gt)
     }
 
     //
-    // Animate the lights (and hence shadows).
+    // 每帧动态调整光源朝向
     //
 
     mLightRotationAngle += 0.1f * gt.DeltaTime();
@@ -334,38 +334,37 @@ void ShadowMapApp::Draw(const GameTimer& gt)
     // The root signature knows how many descriptors are expected in the table.
     mCommandList->SetGraphicsRootDescriptorTable(4, mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
+    // 绘制ShadowMap
     DrawSceneToShadowMap();
 
+    // 将绘制视口设置回默认后台缓冲区视口
     mCommandList->RSSetViewports(1, &mScreenViewport);
     mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-    // Indicate a state transition on the resource usage.
+    // 将当前后台缓冲区资源状态改为rendertarget
     CD3DX12_RESOURCE_BARRIER ResBarrier = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
         D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     mCommandList->ResourceBarrier(1, &ResBarrier);
 
-    // Clear the back buffer and depth buffer.
+    // 清理后台缓冲区，清理深度缓冲区
     mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
     mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
-    // Specify the buffers we are going to render to.
+    // 将RenderTarget设置为当前后台缓冲区
     D3D12_CPU_DESCRIPTOR_HANDLE CurrentBackView = CurrentBackBufferView();
     D3D12_CPU_DESCRIPTOR_HANDLE CurrentDepthView = DepthStencilView();
     mCommandList->OMSetRenderTargets(1, &CurrentBackView, true, &CurrentDepthView);
-
+    // 设置RenderPass常量缓冲区数据
     auto passCB = mCurrFrameResource->PassCB->Resource();
     mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
 
-    // Bind the sky cube map.  For our demos, we just use one "world" cube map representing the environment
-    // from far away, so all objects will use the same cube map and we only need to set it once per-frame.  
-    // If we wanted to use "local" cube maps, we would have to change them per-object, or dynamically
-    // index into an array of cube maps.
-
+    // 绑定天空盒立方体纹理
     CD3DX12_GPU_DESCRIPTOR_HANDLE skyTexDescriptor(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
     skyTexDescriptor.Offset(mSkyTexHeapIndex, mCbvSrvUavDescriptorSize);
     mCommandList->SetGraphicsRootDescriptorTable(3, skyTexDescriptor);
-
+    // 设置渲染管线状态对象
     mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+    // 绘制所有显示对象
     DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
 
     mCommandList->SetPipelineState(mPSOs["debug"].Get());
@@ -507,7 +506,7 @@ void ShadowMapApp::UpdateMaterialBuffer(const GameTimer& gt)
 
 void ShadowMapApp::UpdateShadowTransform(const GameTimer& gt)
 {
-    // Only the first "main" light casts a shadow.
+    // 仅主光源会产生阴影，因此对主光源构建光照视角VPT矩阵
     XMVECTOR lightDir = XMLoadFloat3(&mRotatedLightDirections[0]);
     XMVECTOR lightPos = -2.0f * mSceneBounds.Radius * lightDir;
     XMVECTOR targetPos = XMLoadFloat3(&mSceneBounds.Center);
@@ -516,11 +515,11 @@ void ShadowMapApp::UpdateShadowTransform(const GameTimer& gt)
 
     XMStoreFloat3(&mLightPosW, lightPos);
 
-    // Transform bounding sphere to light space.
+    // 构建光照视角View空间变换矩阵
     XMFLOAT3 sphereCenterLS;
     XMStoreFloat3(&sphereCenterLS, XMVector3TransformCoord(targetPos, lightView));
 
-    // Ortho frustum in light space encloses scene.
+    // 构建光照视角正交透视矩阵
     float l = sphereCenterLS.x - mSceneBounds.Radius;
     float b = sphereCenterLS.y - mSceneBounds.Radius;
     float n = sphereCenterLS.z - mSceneBounds.Radius;
@@ -532,13 +531,14 @@ void ShadowMapApp::UpdateShadowTransform(const GameTimer& gt)
     mLightFarZ = f;
     XMMATRIX lightProj = XMMatrixOrthographicOffCenterLH(l, r, b, t, n, f);
 
-    // Transform NDC space [-1,+1]^2 to texture space [0,1]^2
+    // 构建纹理矩阵
     XMMATRIX T(
         0.5f, 0.0f, 0.0f, 0.0f,
         0.0f, -0.5f, 0.0f, 0.0f,
         0.0f, 0.0f, 1.0f, 0.0f,
         0.5f, 0.5f, 0.0f, 1.0f);
 
+    // 构建VPT矩阵
     XMMATRIX S = lightView * lightProj * T;
     XMStoreFloat4x4(&mLightView, lightView);
     XMStoreFloat4x4(&mLightProj, lightProj);
@@ -588,6 +588,7 @@ void ShadowMapApp::UpdateMainPassCB(const GameTimer& gt)
 
 void ShadowMapApp::UpdateShadowPassCB(const GameTimer& gt)
 {
+    // 将灯光视角下构建的视矩阵投影矩阵，ShadowMap宽高等信息传递给RenderPass的常量缓冲区
     XMMATRIX view = XMLoadFloat4x4(&mLightView);
     XMMATRIX proj = XMLoadFloat4x4(&mLightProj);
 
@@ -669,7 +670,7 @@ void ShadowMapApp::BuildRootSignature()
     // Perfomance TIP: Order from most frequent to least frequent.
     slotRootParameter[0].InitAsConstantBufferView(0);
     slotRootParameter[1].InitAsConstantBufferView(1);
-    slotRootParameter[2].InitAsShaderResourceView(0, 1);
+    slotRootParameter[2].InitAsShaderResourceView(0, 1);  
     slotRootParameter[3].InitAsDescriptorTable(1, &texTable0, D3D12_SHADER_VISIBILITY_PIXEL);
     slotRootParameter[4].InitAsDescriptorTable(1, &texTable1, D3D12_SHADER_VISIBILITY_PIXEL);
 
@@ -1106,6 +1107,7 @@ void ShadowMapApp::BuildPSOs()
     // PSO for shadow map pass.
     //
     D3D12_GRAPHICS_PIPELINE_STATE_DESC smapPsoDesc = opaquePsoDesc;
+    // 在光栅化状态参数中设置斜率偏移补偿相关参数
     smapPsoDesc.RasterizerState.DepthBias = 100000;
     smapPsoDesc.RasterizerState.DepthBiasClamp = 0.0f;
     smapPsoDesc.RasterizerState.SlopeScaledDepthBias = 1.0f;
@@ -1121,7 +1123,7 @@ void ShadowMapApp::BuildPSOs()
         mShaders["shadowOpaquePS"]->GetBufferSize()
     };
 
-    // Shadow map pass does not have a render target.
+    // ShadowMapPass只会渲染深度不会渲染颜色，因此没有RenderTarget也就没有渲染目标格式
     smapPsoDesc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
     smapPsoDesc.NumRenderTargets = 0;
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&smapPsoDesc, IID_PPV_ARGS(&mPSOs["shadow_opaque"])));
@@ -1399,38 +1401,39 @@ void ShadowMapApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std
 
 void ShadowMapApp::DrawSceneToShadowMap()
 {
+    // 将要绘制的目标从后台缓冲区设置为ShadowMap
     D3D12_VIEWPORT viewPort = mShadowMap->Viewport();
     mCommandList->RSSetViewports(1, &viewPort);
     D3D12_RECT re = mShadowMap->ScissorRect();
     mCommandList->RSSetScissorRects(1, &re);
 
-    // Change to DEPTH_WRITE.
+    // 将ShadowMap纹理资源的状态改为写入
     CD3DX12_RESOURCE_BARRIER Transition = CD3DX12_RESOURCE_BARRIER::Transition(mShadowMap->Resource(),
         D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE);
     mCommandList->ResourceBarrier(1, &Transition);
 
     UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
 
-    // Clear the back buffer and depth buffer.
+    // 以深度缓冲区描述符清理ShadowMap资源
     mCommandList->ClearDepthStencilView(mShadowMap->Dsv(),
         D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
-    // Set null render target because we are only going to draw to
-    // depth buffer.  Setting a null render target will disable color writes.
-    // Note the active PSO also must specify a render target count of 0.
+    // 由于绘制ShadowMap的过程本质上为的时获取灯光视角下的深度信息，因此不需要绘制颜色值到RenderTarget
+    // 这也就是ShadowMap PSO对象将rendertargetcount设置为0的原因。因此此处RenderTarget的对象也设置为nullptr
     CD3DX12_CPU_DESCRIPTOR_HANDLE DsvHandle = mShadowMap->Dsv();
     mCommandList->OMSetRenderTargets(0, nullptr, false, &DsvHandle);
 
-    // Bind the pass constant buffer for the shadow map pass.
+    // 将ShadowMapPass参数绑定到RenderPass常量缓冲区
     auto passCB = mCurrFrameResource->PassCB->Resource();
     D3D12_GPU_VIRTUAL_ADDRESS passCBAddress = passCB->GetGPUVirtualAddress() + 1 * passCBByteSize;
     mCommandList->SetGraphicsRootConstantBufferView(1, passCBAddress);
-
+    // 设置渲染流水线状态对象为ShadowMap，并渲染所有RenderItems
     mCommandList->SetPipelineState(mPSOs["shadow_opaque"].Get());
 
     DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
 
-    // Change back to GENERIC_READ so we can read the texture in a shader.
+    // 对所有对象绘制完成后，将存有深度数据的ShadowMap缓冲资源的状态由写入改为读取，供下个RenderPass从
+    // 中读取灯光视角下的深度信息
     CD3DX12_RESOURCE_BARRIER ResBarrier = CD3DX12_RESOURCE_BARRIER::Transition(mShadowMap->Resource(),
         D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ);
     mCommandList->ResourceBarrier(1, &ResBarrier);
