@@ -30,7 +30,8 @@ struct VertexOut
 {
 	float4 PosH    : SV_POSITION;
     float4 ShadowPosH : POSITION0;
-    float3 PosW    : POSITION1;
+    float4 SsaoPosH   : POSITION1;
+    float3 PosW    : POSITION2;
     float3 NormalW : NORMAL;
 	float3 TangentW : TANGENT;
 	float2 TexC    : TEXCOORD;
@@ -40,24 +41,29 @@ VertexOut VS(VertexIn vin)
 {
 	VertexOut vout = (VertexOut)0.0f;
 
-	// 获取材质信息
+	// Fetch the material data.
 	MaterialData matData = gMaterialData[gMaterialIndex];
 	
-    // 将顶点位置，法线，切线信息转换到世界空间
+    // Transform to world space.
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
     vout.PosW = posW.xyz;
 
+    // Assumes nonuniform scaling; otherwise, need to use inverse-transpose of world matrix.
     vout.NormalW = mul(vin.NormalL, (float3x3)gWorld);
+	
 	vout.TangentW = mul(vin.TangentU, (float3x3)gWorld);
 
-    // 将顶点转换到裁剪空间(MVP)
+    // Transform to homogeneous clip space.
     vout.PosH = mul(posW, gViewProj);
+
+    // Generate projective tex-coords to project SSAO map onto scene.
+    vout.SsaoPosH = mul(posW, gViewProjTex);
 	
-	// 计算纹理坐标
+	// Output vertex attributes for interpolation across triangle.
 	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
 	vout.TexC = mul(texC, matData.MatTransform).xy;
 
-    // 将顶点转换到灯光视角下的MVPT空间
+    // Generate projective tex-coords to project shadow map onto scene.
     vout.ShadowPosH = mul(posW, gShadowTransform);
 	
     return vout;
@@ -65,7 +71,7 @@ VertexOut VS(VertexIn vin)
 
 float4 PS(VertexOut pin) : SV_Target
 {
-	// 采集材质参数数据
+	// Fetch the material data.
 	MaterialData matData = gMaterialData[gMaterialIndex];
 	float4 diffuseAlbedo = matData.DiffuseAlbedo;
 	float3 fresnelR0 = matData.FresnelR0;
@@ -73,18 +79,20 @@ float4 PS(VertexOut pin) : SV_Target
 	uint diffuseMapIndex = matData.DiffuseMapIndex;
 	uint normalMapIndex = matData.NormalMapIndex;
 	
-    // 从纹理数组中动态采集漫反射纹理
+    // Dynamically look up the texture in the array.
     diffuseAlbedo *= gTextureMaps[diffuseMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
 
 #ifdef ALPHA_TEST
-    // Alpha测试
+    // Discard pixel if texture alpha < 0.1.  We do this test as soon 
+    // as possible in the shader so that we can potentially exit the
+    // shader early, thereby skipping the rest of the shader code.
     clip(diffuseAlbedo.a - 0.1f);
 #endif
 
-	// 归一化法线(经过光栅化之后的法线需要归一化)
+	// Interpolating normal can unnormalize it, so renormalize it.
     pin.NormalW = normalize(pin.NormalW);
-	// 对法线贴图采样并将其转换到世界空间
-	float4 normalMapSample = gTextureMaps[normalMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
+	
+    float4 normalMapSample = gTextureMaps[normalMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
 	float3 bumpedNormalW = NormalSampleToWorldSpace(normalMapSample.rgb, pin.NormalW, pin.TangentW);
 
 	// Uncomment to turn off normal mapping.
@@ -93,16 +101,20 @@ float4 PS(VertexOut pin) : SV_Target
     // Vector from point being lit to eye. 
     float3 toEyeW = normalize(gEyePosW - pin.PosW);
 
-    // Light terms.
-    float4 ambient = gAmbientLight*diffuseAlbedo;
+    // 计算处屏幕空间的坐标
+    pin.SsaoPosH /= pin.SsaoPosH.w;
+    // 对存有可及率的SSAO贴图进行采样取得当前像素的环境光可及率
+    float ambientAccess = gSsaoMap.Sample(gsamLinearClamp, pin.SsaoPosH.xy, 0.0f).r;
 
-    // 计算阴影因子
+    // 对环境光进行计算时加入可及率因素
+    float4 ambient = ambientAccess*gAmbientLight*diffuseAlbedo;
+
+    // Only the first light casts a shadow.
     float3 shadowFactor = float3(1.0f, 1.0f, 1.0f);
     shadowFactor[0] = CalcShadowFactor(pin.ShadowPosH);
 
     const float shininess = (1.0f - roughness) * normalMapSample.a;
     Material mat = { diffuseAlbedo, fresnelR0, shininess };
-    // 使用阴影因子计算当前像素的光照，如果完全在阴影中则没有任何光照效果
     float4 directLight = ComputeLighting(gLights, mat, pin.PosW,
         bumpedNormalW, toEyeW, shadowFactor);
 
